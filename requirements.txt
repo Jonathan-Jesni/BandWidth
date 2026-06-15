@@ -1,0 +1,5 @@
+flask>=3.0.0
+requests>=2.32.0
+python-dotenv>=1.2.2
+pygithub>=2.3.0
+band-sdk[anthropic]>=1.0.0

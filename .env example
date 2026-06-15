@@ -1,0 +1,15 @@
+# .env
+# Band Platform Credentials
+ARCHITECT_AGENT_ID="your-architect-uuid"
+ARCHITECT_API_KEY="your-architect-key"
+
+REVIEWER_AGENT_ID="your-reviewer-uuid"
+REVIEWER_API_KEY="your-reviewer-key"
+
+TESTER_AGENT_ID="your-tester-uuid"
+TESTER_API_KEY="your-tester-key"
+
+# LLM Providers
+ANTHROPIC_API_KEY="your-claude-key"
+FEATHERLESS_API_KEY="your-featherless-key"
+AIML_API_KEY="your-aiml-key"
