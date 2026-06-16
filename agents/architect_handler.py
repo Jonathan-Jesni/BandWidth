@@ -22,6 +22,7 @@ log = logging.getLogger(__name__)
 
 _GITHUB_API = "https://api.github.com"
 _DIFF_CAP = 4000  # chars; Band message size limit is generous but keep it readable
+_TESTER_DONE_MARKERS = ("## Tests & Docs", "Blocker detected")
 
 
 def _fetch_pr_files(repo: str, pr_number: int, token: str) -> str:
@@ -56,6 +57,47 @@ def _fetch_pr_files(repo: str, pr_number: int, token: str) -> str:
             break
 
     return "\n".join(lines) if lines else "(no changed files)"
+
+
+async def _wait_for_tester(
+    tools: AgentTools, room_id: str, *, timeout: int = 180, interval: int = 5
+) -> bool:
+    for _ in range(timeout // interval):
+        await asyncio.sleep(interval)
+        try:
+            ctx = await tools.fetch_room_context(room_id=room_id, page_size=50)
+            for m in ctx.get("data", []):
+                if any(marker in (m.get("content") or "") for marker in _TESTER_DONE_MARKERS):
+                    return True
+        except Exception:
+            pass
+    return False
+
+
+def _format_transcript(messages: list[dict]) -> str:
+    lines = ["## BandWidth AI Review\n"]
+    for m in messages:
+        sender = m.get("sender_name") or m.get("sender_id", "Agent")
+        content = (m.get("content") or "").strip()
+        if not content:
+            continue
+        lines.append(f"### {sender}\n{content}\n")
+    return "\n".join(lines)
+
+
+def _post_github_comment(repo: str, pr_number: int, token: str, body: str) -> None:
+    url = f"{_GITHUB_API}/repos/{repo}/issues/{pr_number}/comments"
+    resp = requests.post(
+        url,
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+        },
+        json={"body": body},
+        timeout=15,
+    )
+    resp.raise_for_status()
 
 
 async def handle_pr_event(payload: dict) -> None:
@@ -119,6 +161,18 @@ async def handle_pr_event(payload: dict) -> None:
 
         await tools.send_message(opening, mentions=mentions)
         log.info("PR #%d: Opening message posted to room %s", pr_number, room_id)
+
+        # Wait for the Tester to finish, then post a full transcript to GitHub.
+        log.info("PR #%d: Waiting for Tester to complete...", pr_number)
+        finished = await _wait_for_tester(tools, room_id)
+        if not finished:
+            log.warning("PR #%d: Tester timed out — posting partial transcript", pr_number)
+
+        ctx = await tools.fetch_room_context(room_id=room_id, page_size=50)
+        messages = list(reversed(ctx.get("data", [])))  # context is newest-first
+        comment_body = _format_transcript(messages)
+        _post_github_comment(repo, pr_number, token, comment_body)
+        log.info("PR #%d: GitHub comment posted", pr_number)
 
     except Exception:
         log.exception("architect_handler: failed to handle PR event")
