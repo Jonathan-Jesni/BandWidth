@@ -14,6 +14,7 @@ from typing import Any
 
 import openai
 
+import config
 from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import PlatformMessage
@@ -55,6 +56,23 @@ class ReviewerAdapter(SimpleAdapter[Any]):
             for p in tools.participants
             if p.get("id") != self_id and (p.get("handle") or p.get("name"))
         ]
+
+    def _architect_mention(self, tools: AgentToolsProtocol) -> list[str]:
+        """Mention only the Architect (a SilentAdapter that never races on the
+        message). Keeps the Tester off the chat channel so it can't hit the 422
+        resync loop — it still receives the verdict via the broadcast task event.
+        """
+        try:
+            architect_id = config.architect().agent_id
+        except Exception:
+            architect_id = None
+        mentions = [
+            p.get("handle") or p.get("name")
+            for p in tools.participants
+            if p.get("id") == architect_id and (p.get("handle") or p.get("name"))
+        ]
+        # Fallback so send_message always has ≥1 mention (e.g. solo-test room).
+        return mentions or self._peer_mentions(tools)
 
     async def on_message(
         self,
@@ -100,7 +118,7 @@ class ReviewerAdapter(SimpleAdapter[Any]):
         flag = "Blocker" if "Verdict: Blocker" in review_text else "Pass"
         log.info("[Reviewer] Verdict: %s", flag)
 
-        mentions = self._peer_mentions(tools)
+        mentions = self._architect_mention(tools)
         if not mentions:
             log.warning("[Reviewer] no peers to mention; posting review anyway via event")
         else:
