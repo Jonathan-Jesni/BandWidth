@@ -4,3 +4,12 @@ venv/
 __pycache__/
 *.pyc
 .DS_Store
+
+# AI IDE & Memory Files
+agents.md
+claude.md
+.cursor/
+.cursorrules
+.agents/
+.claude/
+.gemini/

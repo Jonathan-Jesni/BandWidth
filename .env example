@@ -13,3 +13,7 @@ TESTER_API_KEY="your-tester-key"
 ANTHROPIC_API_KEY="your-claude-key"
 FEATHERLESS_API_KEY="your-featherless-key"
 AIML_API_KEY="your-aiml-key"
+
+# GitHub integration
+GITHUB_TOKEN="your-github-pat"
+GITHUB_WEBHOOK_SECRET="your-webhook-secret"

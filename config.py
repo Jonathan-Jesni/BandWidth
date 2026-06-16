@@ -65,3 +65,11 @@ def reviewer() -> AgentCreds:
 
 def tester() -> AgentCreds:
     return load_creds("TESTER", "Tester")
+
+
+def github_token() -> str:
+    return require("GITHUB_TOKEN")
+
+
+def webhook_secret() -> str:
+    return require("GITHUB_WEBHOOK_SECRET")
