@@ -1,7 +1,25 @@
 """Architect agent entrypoint. Run: python -m agents.architect"""
 
+import asyncio
+import logging
+
+from band import Agent
+
 import config
-from agents._run import run_agent
+from agents.silent_adapter import SilentAdapter
 
 if __name__ == "__main__":
-    run_agent(config.architect())
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
+    creds = config.architect()
+    agent = Agent.create(
+        adapter=SilentAdapter(),
+        agent_id=creds.agent_id,
+        api_key=creds.api_key,
+        ws_url=config.BAND_WS_URL,
+        rest_url=config.BAND_REST_URL,
+    )
+    logging.getLogger(__name__).info("Launching Architect agent (silent coordinator)...")
+    asyncio.run(agent.run())
