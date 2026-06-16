@@ -28,8 +28,10 @@ class EchoAdapter(SimpleAdapter[Any]):
     SUPPORTED_CAPABILITIES = frozenset()
 
     def __init__(self) -> None:
-        # No history converter: we only react to the latest message.
         super().__init__(history_converter=None)
+        # Only acknowledge the first (Architect's seed) message per room.
+        # This prevents re-echoing the Reviewer's review and stops echo storms.
+        self._greeted_rooms: set[str] = set()
 
     def _self_id(self) -> str | None:
         # Agent.start() sets this attribute on the adapter before processing.
@@ -66,10 +68,14 @@ class EchoAdapter(SimpleAdapter[Any]):
         if self._self_id() and msg.sender_id == self._self_id():
             return
         # Skip Band event subtypes (tool_call, tool_result, thought, error, task).
-        # Regular chat messages come through as "chat" or similar — let them pass.
         _EVENT_TYPES = {"tool_call", "tool_result", "thought", "error", "task"}
         if msg.message_type in _EVENT_TYPES:
             return
+        # Only acknowledge the first message per room (the Architect's seed).
+        # Prevents re-echoing the Reviewer's review and avoids echo storms.
+        if room_id in self._greeted_rooms:
+            return
+        self._greeted_rooms.add(room_id)
 
         mentions = self._peer_mentions(tools)
         if not mentions:
