@@ -2,8 +2,8 @@
 
 Triggers once per room when it sees the Architect's PR context message
 (identified by "## Diff summary"). Calls DeepSeek V4 Pro via Featherless to
-produce a structured review, posts it to the room, and emits a `task`
-event with the verdict flag ("Pass" or "Blocker") for the Tester to act on.
+produce a structured review, posts it (mentioning only the silent Architect),
+then sends a second direct message to only the Tester with the verdict.
 """
 
 from __future__ import annotations
@@ -58,10 +58,8 @@ class ReviewerAdapter(SimpleAdapter[Any]):
         ]
 
     def _architect_mention(self, tools: AgentToolsProtocol) -> list[str]:
-        """Mention only the Architect (a SilentAdapter that never races on the
-        message). Keeps the Tester off the chat channel so it can't hit the 422
-        resync loop — it still receives the verdict via the broadcast task event.
-        """
+        """Mention only the Architect for the review post — it's a SilentAdapter,
+        so it never races on the message."""
         try:
             architect_id = config.architect().agent_id
         except Exception:
@@ -73,6 +71,21 @@ class ReviewerAdapter(SimpleAdapter[Any]):
         ]
         # Fallback so send_message always has ≥1 mention (e.g. solo-test room).
         return mentions or self._peer_mentions(tools)
+
+    def _tester_mention(self, tools: AgentToolsProtocol) -> list[str]:
+        """Mention only the Tester for the verdict notification — separate message
+        so only one active agent receives each message (avoids 422 race)."""
+        self_id = self._self_id()
+        try:
+            architect_id = config.architect().agent_id
+        except Exception:
+            architect_id = None
+        return [
+            p.get("handle") or p.get("name")
+            for p in tools.participants
+            if p.get("id") not in (self_id, architect_id)
+            and (p.get("handle") or p.get("name"))
+        ]
 
     async def on_message(
         self,
@@ -118,18 +131,22 @@ class ReviewerAdapter(SimpleAdapter[Any]):
         flag = "Blocker" if "Verdict: Blocker" in review_text else "Pass"
         log.info("[Reviewer] Verdict: %s", flag)
 
-        mentions = self._architect_mention(tools)
-        if not mentions:
-            log.warning("[Reviewer] no peers to mention; posting review anyway via event")
+        arch_mentions = self._architect_mention(tools)
+        if not arch_mentions:
+            log.warning("[Reviewer] no Architect to mention — skipping review post")
         else:
             await tools.send_message(
                 f"## Code Review\n\n{review_text}",
-                mentions=mentions,
+                mentions=arch_mentions,
             )
 
-        # Emit the typed verdict event — this is what the Tester watches.
-        await tools.send_event(
-            content=f"Review verdict: {flag}",
-            message_type="task",
-            metadata={"flag": flag, "by": self.agent_name},
-        )
+        # Deliver verdict directly to the Tester via a dedicated chat message.
+        # send_event is NOT delivered as an actionable message by the platform,
+        # so we use a second send_message with only the Tester as recipient.
+        tester_mentions = self._tester_mention(tools)
+        if tester_mentions:
+            await tools.send_message(
+                f"## Verdict\n{flag}",
+                mentions=tester_mentions,
+            )
+            log.info("[Reviewer] Verdict notification sent to Tester")

@@ -1,9 +1,9 @@
 """TesterAdapter — QA and docs agent.
 
-Watches for the Reviewer's typed `task` verdict event. On "Pass", fetches
-the PR context from room history and calls DeepSeek-V4-Pro via Featherless
-to generate unit test descriptions and documentation suggestions. On
-"Blocker", posts an acknowledgment and waits for the next cycle.
+Watches for the Reviewer's verdict notification message (contains "## Verdict").
+On "Pass", fetches the PR context from room history and calls DeepSeek-V4-Pro
+via Featherless to generate unit test descriptions and documentation suggestions.
+On "Blocker", posts an acknowledgment and waits for the next cycle.
 """
 
 from __future__ import annotations
@@ -20,6 +20,8 @@ from band.core.simple_adapter import SimpleAdapter
 from band.core.types import PlatformMessage
 
 log = logging.getLogger(__name__)
+
+_EVENT_TYPES = {"tool_call", "tool_result", "thought", "error", "task"}
 
 _TESTER_SYSTEM_PROMPT = """\
 You are a QA engineer and technical writer. Given a PR diff and description, output:
@@ -86,12 +88,19 @@ class TesterAdapter(SimpleAdapter[Any]):
         # Only fire once per room.
         if room_id in self._tested_rooms:
             return
-        # Only react to the Reviewer's typed task event.
-        if msg.message_type != "task":
+        # Skip internal SDK event types.
+        if msg.message_type in _EVENT_TYPES:
             return
-        metadata = msg.metadata or {}
-        flag = metadata.get("flag") if isinstance(metadata, dict) else None
-        if not flag:
+        # Only react to the Reviewer's verdict notification.
+        content = msg.content or ""
+        if "## Verdict" not in content:
+            return
+
+        if "Blocker" in content:
+            flag = "Blocker"
+        elif "Pass" in content:
+            flag = "Pass"
+        else:
             return
 
         self._tested_rooms.add(room_id)
@@ -124,7 +133,7 @@ class TesterAdapter(SimpleAdapter[Any]):
         except Exception:
             log.warning("[Tester] could not fetch room context; using event content")
 
-        user_content = pr_context or msg.content or "(no PR context available)"
+        user_content = pr_context or "(no PR context available)"
 
         try:
             response = self._client.chat.completions.create(
