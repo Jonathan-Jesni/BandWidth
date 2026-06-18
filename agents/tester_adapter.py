@@ -117,10 +117,23 @@ class TesterAdapter(SimpleAdapter[Any]):
             return
 
         # Fetch the Architect's PR context message (carries diff + source payload).
+        # We must use the Architect's credentials because the Architect's opening
+        # message mentions ONLY the Reviewer, making it invisible to the Tester.
         pr_context = ""
         source_files: dict[str, str] = {}
         try:
-            ctx = await tools.fetch_room_context(room_id=room_id, page_size=100)
+            from band.platform import BandLink
+            from band import AgentTools
+            architect = config.architect()
+            arch_link = BandLink(
+                agent_id=architect.agent_id,
+                api_key=architect.api_key,
+                ws_url=config.BAND_WS_URL,
+                rest_url=config.BAND_REST_URL,
+            )
+            arch_tools = AgentTools(room_id, arch_link.rest, [])
+            ctx = await arch_tools.fetch_room_context(room_id=room_id, page_size=100)
+            
             for m in ctx.get("data", []):
                 c = m.get("content") or ""
                 if "## Diff summary" in c:

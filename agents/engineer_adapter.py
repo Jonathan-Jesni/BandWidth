@@ -112,11 +112,28 @@ class EngineerAdapter(SimpleAdapter[Any]):
             return
 
         # Gather PR context: metadata, source files, and the blocker review.
+        # We must fetch the context as the Architect, because the Architect's
+        # opening message mentions ONLY the Reviewer (to avoid 422 races),
+        # making it invisible to the Engineer's credentials.
+        error_msg = "None"
+        ctx_len = -1
         meta: dict[str, str] = {}
         sources: dict[str, str] = {}
         review = ""
         try:
-            ctx = await tools.fetch_room_context(room_id=room_id, page_size=100)
+            from band.platform import BandLink
+            from band import AgentTools
+            architect = config.architect()
+            arch_link = BandLink(
+                agent_id=architect.agent_id,
+                api_key=architect.api_key,
+                ws_url=config.BAND_WS_URL,
+                rest_url=config.BAND_REST_URL,
+            )
+            arch_tools = AgentTools(room_id, arch_link.rest, [])
+            ctx = await arch_tools.fetch_room_context(room_id=room_id, page_size=100)
+            
+            ctx_len = len(ctx.get("data", []))
             for m in ctx.get("data", []):
                 c = m.get("content") or ""
                 if "## Diff summary" in c:
@@ -124,7 +141,8 @@ class EngineerAdapter(SimpleAdapter[Any]):
                     sources = parse_files(c)
                 if "## Code Review" in c and not review:
                     review = c
-        except Exception:
+        except Exception as e:
+            error_msg = repr(e)
             log.exception("[Engineer] could not read room context")
 
         head_repo = meta.get("head_repo") or meta.get("repo")
@@ -134,7 +152,14 @@ class EngineerAdapter(SimpleAdapter[Any]):
         if not (head_repo and branch and sources):
             await self._post(
                 tools, mentions,
-                "## Auto-Fix Failed\n\nMissing branch metadata or source files — cannot patch.",
+                f"## Auto-Fix Failed\n\nMissing branch metadata or source files — cannot patch.\n\n"
+                f"Debug info:\n"
+                f"- meta: {meta}\n"
+                f"- sources length: {len(sources)}\n"
+                f"- head_repo: {head_repo}\n"
+                f"- branch: {branch}\n"
+                f"- ctx length: {ctx_len}\n"
+                f"- exception: {error_msg}"
             )
             return
 
