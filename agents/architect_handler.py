@@ -60,12 +60,12 @@ def _fetch_pr_files(repo: str, pr_number: int, token: str) -> str:
 
 
 async def _wait_for_tester(
-    tools: AgentTools, room_id: str, *, timeout: int = 180, interval: int = 5
+    tools: AgentTools, room_id: str, *, timeout: int = 300, interval: int = 5
 ) -> bool:
     for _ in range(timeout // interval):
         await asyncio.sleep(interval)
         try:
-            ctx = await tools.fetch_room_context(room_id=room_id, page_size=50)
+            ctx = await tools.fetch_room_context(room_id=room_id, page_size=100)
             for m in ctx.get("data", []):
                 if any(marker in (m.get("content") or "") for marker in _TESTER_DONE_MARKERS):
                     return True
@@ -168,7 +168,7 @@ async def handle_pr_event(payload: dict) -> None:
         if not finished:
             log.warning("PR #%d: Tester timed out — posting partial transcript", pr_number)
 
-        ctx = await tools.fetch_room_context(room_id=room_id, page_size=50)
+        ctx = await tools.fetch_room_context(room_id=room_id, page_size=100)
         messages = list(reversed(ctx.get("data", [])))  # context is newest-first
         comment_body = _format_transcript(messages)
         _post_github_comment(repo, pr_number, token, comment_body)
