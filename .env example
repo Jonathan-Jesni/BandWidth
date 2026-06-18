@@ -21,7 +21,11 @@ AIML_API_KEY="your-aiml-key"
 
 # Model overrides (optional)
 FEATHERLESS_MODEL="deepseek-ai/DeepSeek-V4-Pro"
-AIML_MODEL="gpt-4o-mini"        # bump to gpt-4o for the final demo recording
+# AIML_MODEL powers the Engineer's fixes + the Architect's plan. gpt-4o-mini is
+# cheap for dev, but produces weaker fixes that the stricter DeepSeek reviewer may
+# reject (→ escalation). For the FINAL DEMO RECORDING use gpt-4o so fixes converge
+# cleanly to a PASS + green tests.
+AIML_MODEL="gpt-4o-mini"        # ← set to "gpt-4o" for the demo recording
 
 # Per-role provider overrides (optional): featherless | aimlapi.
 # Default topology — Reviewer/Tester on Featherless, Engineer/Architect on AI/ML API.

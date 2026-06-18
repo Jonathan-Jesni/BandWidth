@@ -52,6 +52,7 @@ _TESTER_DONE_MARKERS = (
     "## Test Results",
     "## Auto-Fix",
     "## Auto-Fix Failed",
+    "## Escalated for Human Review",
     "Blocker detected",
 )
 _ROOM_MARKER_RE = re.compile(r"<!--\s*bandwidth-room:([^\s>]+)\s*-->")

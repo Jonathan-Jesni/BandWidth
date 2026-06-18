@@ -32,7 +32,7 @@ from band.core.types import PlatformMessage
 log = logging.getLogger(__name__)
 
 _EVENT_TYPES = {"tool_call", "tool_result", "thought", "error", "task"}
-_MAX_ATTEMPTS = 1  # auto-fix pushes per (repo, pr) per process — guards push→sync loops
+_MAX_ATTEMPTS = 2  # auto-fix pushes per (repo, pr); past this, escalate to a human
 
 _ENGINEER_SYSTEM_PROMPT = """\
 You are a senior software engineer. You are given a code review listing BLOCKER
@@ -142,10 +142,16 @@ class EngineerAdapter(SimpleAdapter[Any]):
             return
 
         key = (repo, pr)
-        if self._fix_attempts.get(key, 0) >= _MAX_ATTEMPTS:
+        attempts = self._fix_attempts.get(key, 0)
+        if attempts >= _MAX_ATTEMPTS:
+            await emit_task(tools, "Engineer", "escalated", attempts=attempts)
             await self._post(
                 tools, mentions,
-                "## Auto-Fix Failed\n\nStill blocked after an auto-fix attempt — manual review needed.",
+                f"## Escalated for Human Review\n\n"
+                f"The Engineer attempted {attempts} automated fix(es), but the Reviewer "
+                f"still flags a blocker. The remaining issue needs a human decision "
+                f"(e.g. a product/semantics call the agents shouldn't make autonomously). "
+                f"Pausing auto-fix for this PR.",
             )
             return
 
