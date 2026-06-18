@@ -168,7 +168,12 @@ class EngineerAdapter(SimpleAdapter[Any]):
 
         self._fix_attempts[key] = self._fix_attempts.get(key, 0) + 1
         pushed: list[str] = []
+        if not isinstance(edits, list):
+            edits = []
         for edit in edits:
+            if not isinstance(edit, dict):
+                log.warning("[Engineer] skipping malformed edit entry %r", edit)
+                continue
             path = edit.get("path", "")
             new_content = edit.get("new_content", "")
             if not path or path not in sources:

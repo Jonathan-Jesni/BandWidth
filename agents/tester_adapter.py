@@ -152,7 +152,7 @@ class TesterAdapter(SimpleAdapter[Any]):
         parsed = llm.complete_json(
             self._client, self._model, _EXEC_SYSTEM_PROMPT, files_blob, max_tokens=4096
         )
-        test_code = parsed.get("test_code", "")
+        test_code = str(parsed.get("test_code") or "")
         explanation = parsed.get("explanation", "")
 
         if not test_code.strip():

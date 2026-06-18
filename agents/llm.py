@@ -77,6 +77,10 @@ def sanitize(text: str, *, max_chars: int = 2000, max_lines: int = 12) -> str:
     Guards against degenerate generations (the Reviewer's "floats…floats…" loop):
     even if the model rambles, what reaches the room stays short and readable.
     """
+    if text is None:
+        return ""
+    if not isinstance(text, str):
+        text = str(text)
     if not text:
         return text
     seen: set[str] = set()
