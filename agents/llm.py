@@ -13,9 +13,13 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 
 log = logging.getLogger(__name__)
+
+_ATTEMPTS = 3  # one initial try + two retries on transient API errors
+_FENCE_RE = re.compile(r"```(?:json)?\s*(.*?)```", re.DOTALL)
 
 
 def _create(client, model, system, user, *, max_tokens, json_mode):
@@ -31,15 +35,40 @@ def _create(client, model, system, user, *, max_tokens, json_mode):
     if json_mode:
         kwargs["response_format"] = {"type": "json_object"}
     last_exc: Exception | None = None
-    for attempt in range(2):  # one initial try + one retry
+    for attempt in range(_ATTEMPTS):
         try:
             resp = client.chat.completions.create(**kwargs)
             return (resp.choices[0].message.content or "").strip()
         except Exception as exc:  # noqa: BLE001 - transient API errors
             last_exc = exc
-            log.warning("LLM call failed (attempt %d/2): %s", attempt + 1, exc)
+            log.warning("LLM call failed (attempt %d/%d): %s", attempt + 1, _ATTEMPTS, exc)
             time.sleep(1)
     raise last_exc  # type: ignore[misc]
+
+
+def _loads_lenient(raw: str) -> dict | None:
+    """Best-effort parse of a JSON object the model may have wrapped in prose.
+
+    Tries: the raw string, a stripped ```json fence, then the first `{`…last `}`
+    substring. Returns the first candidate that parses to a dict, else None.
+    """
+    if not raw:
+        return None
+    candidates = [raw]
+    fence = _FENCE_RE.search(raw)
+    if fence:
+        candidates.append(fence.group(1))
+    start, end = raw.find("{"), raw.rfind("}")
+    if start != -1 and end > start:
+        candidates.append(raw[start : end + 1])
+    for candidate in candidates:
+        try:
+            data = json.loads(candidate)
+        except (ValueError, TypeError):
+            continue
+        if isinstance(data, dict):
+            return data
+    return None
 
 
 def complete_text(client, model, system, user, *, max_tokens: int = 1024) -> str:
@@ -56,14 +85,13 @@ def complete_json(client, model, system, user, *, max_tokens: int = 1024) -> dic
     try:
         raw = _create(client, model, system, user, max_tokens=max_tokens, json_mode=True)
     except Exception:
-        log.exception("complete_json: giving up after retry")
+        log.exception("complete_json: giving up after retries")
         return {}
-    try:
-        data = json.loads(raw)
-    except (ValueError, TypeError):
-        log.warning("complete_json: response was not valid JSON")
+    data = _loads_lenient(raw)
+    if data is None:
+        log.warning("complete_json: response was not valid JSON: %r", (raw or "")[:300])
         return {}
-    return data if isinstance(data, dict) else {}
+    return data
 
 
 def _normalize(line: str) -> str:

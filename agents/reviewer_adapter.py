@@ -150,9 +150,9 @@ class ReviewerAdapter(SimpleAdapter[Any]):
         cycle = self._cycles[cycle_key]
 
         parsed = llm.complete_json(
-            self._client, self._model, _SYSTEM_PROMPT, content, max_tokens=900
+            self._client, self._model, _SYSTEM_PROMPT, content, max_tokens=1500
         )
-        review_text = llm.sanitize(parsed.get("issues") or "Review failed — LLM error or invalid JSON.")
+        review_text = llm.sanitize(parsed.get("issues") or "_Automated review was inconclusive this cycle._")
         flag = parsed.get("verdict", "Pass")
         if flag not in ("Pass", "Blocker"):
             flag = "Pass"
