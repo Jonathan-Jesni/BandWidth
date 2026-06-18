@@ -11,7 +11,6 @@ Watches for the Reviewer's "## Verdict" message. On "Pass":
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 from typing import Any
@@ -19,7 +18,8 @@ from typing import Any
 import openai
 
 import config
-from agents import test_runner
+from agents import llm, test_runner
+from agents.architect_handler import fetch_room_context_as_architect
 from agents.room_payload import parse_files
 from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
@@ -117,23 +117,12 @@ class TesterAdapter(SimpleAdapter[Any]):
             return
 
         # Fetch the Architect's PR context message (carries diff + source payload).
-        # We must use the Architect's credentials because the Architect's opening
-        # message mentions ONLY the Reviewer, making it invisible to the Tester.
+        # Read as the Architect — the opening mentions only the Reviewer, so it is
+        # invisible to the Tester's own credentials.
         pr_context = ""
         source_files: dict[str, str] = {}
         try:
-            from band.platform import BandLink
-            from band import AgentTools
-            architect = config.architect()
-            arch_link = BandLink(
-                agent_id=architect.agent_id,
-                api_key=architect.api_key,
-                ws_url=config.BAND_WS_URL,
-                rest_url=config.BAND_REST_URL,
-            )
-            arch_tools = AgentTools(room_id, arch_link.rest, [])
-            ctx = await arch_tools.fetch_room_context(room_id=room_id, page_size=100)
-            
+            ctx = await fetch_room_context_as_architect(room_id)
             for m in ctx.get("data", []):
                 c = m.get("content") or ""
                 if "## Diff summary" in c:
@@ -160,23 +149,11 @@ class TesterAdapter(SimpleAdapter[Any]):
         files_blob = "\n\n".join(
             f"# === {path} ===\n{content}" for path, content in source_files.items()
         )
-        try:
-            response = self._client.chat.completions.create(
-                model=self._model,
-                max_tokens=4096,
-                response_format={"type": "json_object"},
-                messages=[
-                    {"role": "system", "content": _EXEC_SYSTEM_PROMPT},
-                    {"role": "user", "content": files_blob},
-                ],
-            )
-            parsed = json.loads(response.choices[0].message.content.strip())
-            test_code = parsed.get("test_code", "")
-            explanation = parsed.get("explanation", "")
-        except Exception:
-            log.exception("[Tester] test-generation LLM call failed")
-            await self._describe_tests(pr_context, tools, mentions, room_id)
-            return
+        parsed = llm.complete_json(
+            self._client, self._model, _EXEC_SYSTEM_PROMPT, files_blob, max_tokens=4096
+        )
+        test_code = parsed.get("test_code", "")
+        explanation = parsed.get("explanation", "")
 
         if not test_code.strip():
             await self._describe_tests(pr_context, tools, mentions, room_id)
@@ -205,19 +182,13 @@ class TesterAdapter(SimpleAdapter[Any]):
         mentions: list[str],
         room_id: str,
     ) -> None:
-        try:
-            response = self._client.chat.completions.create(
-                model=self._model,
-                max_tokens=4096,
-                messages=[
-                    {"role": "system", "content": _TESTER_SYSTEM_PROMPT},
-                    {"role": "user", "content": pr_context or "(no PR context available)"},
-                ],
-            )
-            test_output = response.choices[0].message.content.strip()
-        except Exception:
-            log.exception("[Tester] LLM call failed")
-            test_output = "Test generation failed — LLM error."
+        test_output = llm.complete_text(
+            self._client,
+            self._model,
+            _TESTER_SYSTEM_PROMPT,
+            pr_context or "(no PR context available)",
+            max_tokens=2048,
+        ) or "Test generation failed — LLM error."
 
         await tools.send_message(f"## Tests & Docs\n\n{test_output}", mentions=mentions)
         log.info("[Tester] Tests & docs posted to room %s", room_id)

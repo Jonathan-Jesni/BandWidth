@@ -14,7 +14,6 @@ human's GitHub comment, it answers with "## Answer" (mentioning the Architect).
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 from typing import Any
@@ -22,6 +21,8 @@ from typing import Any
 import openai
 
 import config
+from agents import llm
+from agents.room_payload import parse_meta
 from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import PlatformMessage
@@ -29,16 +30,19 @@ from band.core.types import PlatformMessage
 log = logging.getLogger(__name__)
 
 _EVENT_TYPES = {"tool_call", "tool_result", "thought", "error", "task"}
+_MAX_CYCLES = 3  # review cycles per (repo, pr) before forcing Pass to end the loop
 
 # Force the LLM to output strict JSON for the review.
 _SYSTEM_PROMPT = """\
 You are a senior code reviewer. Given a PR title, description, and diff, output ONLY valid JSON matching exactly this schema:
 {
-  "issues": "A bullet list of specific issues found (bugs, security problems, style violations). Mark each [BLOCKER] or [MINOR]. If no issues, write '- No issues found.'",
+  "issues": "A bullet list of specific issues found. Mark each [BLOCKER] or [MINOR]. If no issues, write '- No issues found.'",
   "verdict": "Pass" or "Blocker"
 }
 
-Be concise. Max 600 words. Do not repeat the diff back."""
+Rules: list AT MOST 5 issues, ONE LINE each, max 25 words per line. Do NOT repeat
+yourself or restate the same issue. Do not repeat the diff back. Only use the
+"Blocker" verdict for genuine correctness/security bugs, never for style nits."""
 
 _ANSWER_SYSTEM_PROMPT = """\
 You are the senior code reviewer who reviewed this pull request. A human has
@@ -55,6 +59,7 @@ class ReviewerAdapter(SimpleAdapter[Any]):
         super().__init__(history_converter=None)
         self._reviewed_rooms: set[str] = set()
         self._answered: set[str] = set()
+        self._cycles: dict[tuple[str, str], int] = {}
         self._client = openai.OpenAI(
             api_key=os.environ["FEATHERLESS_API_KEY"],
             base_url="https://api.featherless.ai/v1",
@@ -137,27 +142,32 @@ class ReviewerAdapter(SimpleAdapter[Any]):
         self, content: str, tools: AgentToolsProtocol, room_id: str
     ) -> None:
         log.info("[Reviewer] PR context received in room %s — calling LLM", room_id)
-        try:
-            response = self._client.chat.completions.create(
-                model=self._model,
-                max_tokens=4096,
-                response_format={"type": "json_object"},
-                messages=[
-                    {"role": "system", "content": _SYSTEM_PROMPT},
-                    {"role": "user", "content": content},
-                ],
-            )
-            parsed = json.loads(response.choices[0].message.content.strip())
-            review_text = parsed.get("issues", "No issues found.")
-            flag = parsed.get("verdict", "Pass")
-        except Exception:
-            log.exception("[Reviewer] LLM call or JSON parsing failed")
-            review_text = "Review failed — LLM error or invalid JSON."
-            flag = "Pass"
 
+        # Track review cycles per PR so the push→synchronize storm always settles.
+        meta = parse_meta(content)
+        cycle_key = (meta.get("repo", ""), meta.get("pr", ""))
+        self._cycles[cycle_key] = self._cycles.get(cycle_key, 0) + 1
+        cycle = self._cycles[cycle_key]
+
+        parsed = llm.complete_json(
+            self._client, self._model, _SYSTEM_PROMPT, content, max_tokens=900
+        )
+        review_text = llm.sanitize(parsed.get("issues") or "Review failed — LLM error or invalid JSON.")
+        flag = parsed.get("verdict", "Pass")
         if flag not in ("Pass", "Blocker"):
             flag = "Pass"
-        log.info("[Reviewer] Verdict: %s", flag)
+
+        # Stop the loop: after enough cycles, accept what's there rather than
+        # bouncing another Blocker to the Engineer (whose attempt cap may already
+        # be spent), which would otherwise spin forever on stubborn nits.
+        if flag == "Blocker" and cycle > _MAX_CYCLES:
+            log.warning("[Reviewer] cycle cap reached for %s — forcing Pass", cycle_key)
+            review_text += (
+                "\n\n_Max auto-fix cycles reached — remaining items need manual attention._"
+            )
+            flag = "Pass"
+
+        log.info("[Reviewer] Verdict: %s (cycle %d)", flag, cycle)
 
         arch_mentions = self._architect_mention(tools)
         if arch_mentions:
@@ -203,19 +213,14 @@ class ReviewerAdapter(SimpleAdapter[Any]):
             log.warning("[Reviewer] could not fetch context for question")
 
         question = (msg.content or "").replace("## Question", "").strip()
-        try:
-            response = self._client.chat.completions.create(
-                model=self._model,
-                max_tokens=1024,
-                messages=[
-                    {"role": "system", "content": _ANSWER_SYSTEM_PROMPT},
-                    {"role": "user", "content": f"{context_blob}\n\nQuestion:\n{question}"},
-                ],
-            )
-            answer = response.choices[0].message.content.strip()
-        except Exception:
-            log.exception("[Reviewer] answer LLM call failed")
-            answer = "Sorry — I could not generate an answer (LLM error)."
+        answer = llm.complete_text(
+            self._client,
+            self._model,
+            _ANSWER_SYSTEM_PROMPT,
+            f"{context_blob}\n\nQuestion:\n{question}",
+            max_tokens=600,
+        )
+        answer = llm.sanitize(answer, max_chars=1500) or "Sorry — I could not generate an answer (LLM error)."
 
         mentions = self._architect_mention(tools)
         if mentions:

@@ -13,7 +13,6 @@ token and mutates the author's branch.
 from __future__ import annotations
 
 import base64
-import json
 import logging
 import os
 from typing import Any
@@ -21,7 +20,12 @@ from typing import Any
 import openai
 
 import config
-from agents.architect_handler import _GITHUB_API, _github_request
+from agents import llm
+from agents.architect_handler import (
+    _GITHUB_API,
+    _github_request,
+    fetch_room_context_as_architect,
+)
 from agents.room_payload import parse_files, parse_meta
 from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
@@ -41,7 +45,9 @@ making the smallest correct change. Output ONLY valid JSON matching this schema:
   "commit_message": "<concise commit message>"
 }
 Rules: return the entire file content for each edited file (not a diff); only
-include files you actually changed; preserve unrelated code exactly."""
+include files you actually changed; preserve unrelated code exactly. Also REMOVE
+any comment that is now inaccurate because of your fix (e.g. a "BUG:"/"TODO" note
+describing a problem you just resolved) — leaving it makes the reviewer re-flag it."""
 
 
 class EngineerAdapter(SimpleAdapter[Any]):
@@ -112,28 +118,13 @@ class EngineerAdapter(SimpleAdapter[Any]):
             return
 
         # Gather PR context: metadata, source files, and the blocker review.
-        # We must fetch the context as the Architect, because the Architect's
-        # opening message mentions ONLY the Reviewer (to avoid 422 races),
-        # making it invisible to the Engineer's credentials.
-        error_msg = "None"
-        ctx_len = -1
+        # Read as the Architect — the opening message mentions only the Reviewer,
+        # so it is invisible to the Engineer's own credentials.
         meta: dict[str, str] = {}
         sources: dict[str, str] = {}
         review = ""
         try:
-            from band.platform import BandLink
-            from band import AgentTools
-            architect = config.architect()
-            arch_link = BandLink(
-                agent_id=architect.agent_id,
-                api_key=architect.api_key,
-                ws_url=config.BAND_WS_URL,
-                rest_url=config.BAND_REST_URL,
-            )
-            arch_tools = AgentTools(room_id, arch_link.rest, [])
-            ctx = await arch_tools.fetch_room_context(room_id=room_id, page_size=100)
-            
-            ctx_len = len(ctx.get("data", []))
+            ctx = await fetch_room_context_as_architect(room_id)
             for m in ctx.get("data", []):
                 c = m.get("content") or ""
                 if "## Diff summary" in c:
@@ -141,8 +132,7 @@ class EngineerAdapter(SimpleAdapter[Any]):
                     sources = parse_files(c)
                 if "## Code Review" in c and not review:
                     review = c
-        except Exception as e:
-            error_msg = repr(e)
+        except Exception:
             log.exception("[Engineer] could not read room context")
 
         head_repo = meta.get("head_repo") or meta.get("repo")
@@ -152,14 +142,7 @@ class EngineerAdapter(SimpleAdapter[Any]):
         if not (head_repo and branch and sources):
             await self._post(
                 tools, mentions,
-                f"## Auto-Fix Failed\n\nMissing branch metadata or source files — cannot patch.\n\n"
-                f"Debug info:\n"
-                f"- meta: {meta}\n"
-                f"- sources length: {len(sources)}\n"
-                f"- head_repo: {head_repo}\n"
-                f"- branch: {branch}\n"
-                f"- ctx length: {ctx_len}\n"
-                f"- exception: {error_msg}"
+                "## Auto-Fix Failed\n\nMissing branch metadata or source files — cannot patch.",
             )
             return
 
@@ -217,16 +200,9 @@ class EngineerAdapter(SimpleAdapter[Any]):
             f"# === {path} ===\n{content}" for path, content in sources.items()
         )
         user = f"{review}\n\n## Source files\n{files_blob}"
-        response = self._client.chat.completions.create(
-            model=self._model,
-            max_tokens=8192,
-            response_format={"type": "json_object"},
-            messages=[
-                {"role": "system", "content": _ENGINEER_SYSTEM_PROMPT},
-                {"role": "user", "content": user},
-            ],
+        parsed = llm.complete_json(
+            self._client, self._model, _ENGINEER_SYSTEM_PROMPT, user, max_tokens=8192
         )
-        parsed = json.loads(response.choices[0].message.content.strip())
         edits = parsed.get("edits", []) or []
         commit_message = parsed.get("commit_message", "BandWidth auto-fix")
         return edits, commit_message

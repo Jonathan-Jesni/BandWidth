@@ -223,6 +223,19 @@ def _architect_tools(room_id: str) -> tuple[AgentTools, AgentTools]:
     return AgentTools("", rest, []), AgentTools(room_id, rest, [])
 
 
+async def fetch_room_context_as_architect(room_id: str, *, page_size: int = 100) -> dict:
+    """Fetch room context using the Architect's credentials.
+
+    The opening message mentions only the Reviewer (to avoid the 422 race), and
+    Band hides non-mentioned messages from other agents. So the Tester and
+    Engineer cannot see the diff/source payload with their own credentials —
+    they read it through the Architect, who authored it. Single home for that
+    workaround.
+    """
+    _, tools = _architect_tools(room_id)
+    return await tools.fetch_room_context(room_id=room_id, page_size=page_size)
+
+
 async def _wait_for_marker(
     tools: AgentTools,
     room_id: str,
