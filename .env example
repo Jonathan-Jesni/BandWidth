@@ -9,6 +9,9 @@ REVIEWER_API_KEY="your-reviewer-key"
 TESTER_AGENT_ID="your-tester-uuid"
 TESTER_API_KEY="your-tester-key"
 
+ENGINEER_AGENT_ID="your-engineer-uuid"
+ENGINEER_API_KEY="your-engineer-key"
+
 # LLM Providers
 ANTHROPIC_API_KEY="your-claude-key"
 FEATHERLESS_API_KEY="your-featherless-key"
@@ -17,3 +20,8 @@ AIML_API_KEY="your-aiml-key"
 # GitHub integration
 GITHUB_TOKEN="your-github-pat"
 GITHUB_WEBHOOK_SECRET="your-webhook-secret"
+
+# Feature flags (default off). Each is a code-execution / write-access risk —
+# enable deliberately. Truthy = 1/true/yes/on.
+ENABLE_TEST_EXECUTION="0"   # Tester runs real pytest in a sandboxed subprocess
+ENABLE_AUTO_FIX="0"         # Engineer pushes fix commits to the PR branch

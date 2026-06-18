@@ -4,3 +4,4 @@ python-dotenv>=1.2.2
 pygithub>=2.3.0
 band-sdk[anthropic]>=1.0.0
 openai>=1.0.0
+pytest>=8.0.0

@@ -11,7 +11,12 @@ load_dotenv()
 
 # Placeholder values shipped in `.env example`. If any of these survive into the
 # real environment, the credential was never filled in.
+# NOTE: "uuid" is a deliberately loose fragment — a real credential that happens
+# to contain the substring "uuid" would be rejected. None of Band's IDs/keys do,
+# so this is acceptable; widen with care if that ever changes.
 _PLACEHOLDER_FRAGMENTS = ("your-", "uuid", "your-key")
+
+_TRUTHY = {"1", "true", "yes", "on"}
 
 # Band SDK defaults (override only if pointing at a non-prod platform).
 BAND_WS_URL = os.getenv("BAND_WS_URL", "wss://app.band.ai/api/v1/socket/websocket")
@@ -67,9 +72,36 @@ def tester() -> AgentCreds:
     return load_creds("TESTER", "Tester")
 
 
+def engineer() -> AgentCreds:
+    return load_creds("ENGINEER", "Engineer")
+
+
 def github_token() -> str:
     return require("GITHUB_TOKEN")
 
 
 def webhook_secret() -> str:
     return require("GITHUB_WEBHOOK_SECRET")
+
+
+def _flag(name: str) -> bool:
+    """Read a boolean feature flag from the environment (default: off)."""
+    return os.getenv(name, "").strip().lower() in _TRUTHY
+
+
+def enable_test_execution() -> bool:
+    """When true, the Tester runs real pytest in a sandboxed subprocess.
+
+    Off by default: executing test/source code from a PR is arbitrary code
+    execution and should be opted into deliberately (ENABLE_TEST_EXECUTION=1).
+    """
+    return _flag("ENABLE_TEST_EXECUTION")
+
+
+def enable_auto_fix() -> bool:
+    """When true, the Engineer pushes fix commits to the PR branch.
+
+    Off by default: this requires a write-scoped token and mutates the author's
+    branch, so it must be opted into deliberately (ENABLE_AUTO_FIX=1).
+    """
+    return _flag("ENABLE_AUTO_FIX")

@@ -1,13 +1,17 @@
 """TesterAdapter — QA and docs agent.
 
-Watches for the Reviewer's verdict notification message (contains "## Verdict").
-On "Pass", fetches the PR context from room history and calls DeepSeek-V4-Pro
-via Featherless to generate unit test descriptions and documentation suggestions.
-On "Blocker", posts an acknowledgment and waits for the next cycle.
+Watches for the Reviewer's "## Verdict" message. On "Pass":
+  - If ENABLE_TEST_EXECUTION is set: asks the LLM for a self-contained pytest
+    file, writes the PR's modified source files + that test into a temp dir,
+    runs real pytest in a sandboxed subprocess, and posts "## Test Results"
+    with the actual pass/fail output.
+  - Otherwise (default): generates unit-test descriptions + doc suggestions and
+    posts "## Tests & Docs".
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 from typing import Any
@@ -15,6 +19,8 @@ from typing import Any
 import openai
 
 import config
+from agents import test_runner
+from agents.room_payload import parse_files
 from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import PlatformMessage
@@ -29,6 +35,18 @@ You are a QA engineer and technical writer. Given a PR diff and description, out
    a one-sentence description of what it should assert.
 2. Any documentation that should be added or updated (docstrings, README sections, etc.).
 Be concise. Max 500 words."""
+
+_EXEC_SYSTEM_PROMPT = """\
+You are a QA engineer. You are given the full source of the files changed in a
+pull request. Write a SINGLE self-contained pytest test module that imports those
+modules by their module name (filename without .py, top-level) and tests their
+public behavior. Output ONLY valid JSON matching this schema:
+{
+  "test_code": "the complete contents of a pytest file (Python source)",
+  "explanation": "one or two sentences on what the tests cover"
+}
+Rules: import only the provided modules and the standard library; do not access
+the network or filesystem; keep it runnable as-is."""
 
 
 class TesterAdapter(SimpleAdapter[Any]):
@@ -55,12 +73,8 @@ class TesterAdapter(SimpleAdapter[Any]):
             if p.get("id") != self_id and (p.get("handle") or p.get("name"))
         ]
 
-    def _reviewer_mention(self, tools: AgentToolsProtocol) -> list[str]:
-        """Mention only the Reviewer (not self, not the Architect). Avoids the
-        422 race that a multi-mention output message would re-create between the
-        silent Architect and the Reviewer.
-        """
-        self_id = self._self_id()
+    def _architect_mention(self, tools: AgentToolsProtocol) -> list[str]:
+        """Report results to the silent Architect (one inactive recipient → no race)."""
         try:
             architect_id = config.architect().agent_id
         except Exception:
@@ -68,10 +82,8 @@ class TesterAdapter(SimpleAdapter[Any]):
         mentions = [
             p.get("handle") or p.get("name")
             for p in tools.participants
-            if p.get("id") not in (self_id, architect_id)
-            and (p.get("handle") or p.get("name"))
+            if p.get("id") == architect_id and (p.get("handle") or p.get("name"))
         ]
-        # Fallback so send_message always has ≥1 mention.
         return mentions or self._peer_mentions(tools)
 
     async def on_message(
@@ -85,63 +97,108 @@ class TesterAdapter(SimpleAdapter[Any]):
         is_session_bootstrap: bool,
         room_id: str,
     ) -> None:
-        # Only fire once per room.
         if room_id in self._tested_rooms:
             return
-        # Skip internal SDK event types.
         if msg.message_type in _EVENT_TYPES:
             return
-        # Only react to the Reviewer's verdict notification.
         content = msg.content or ""
         if "## Verdict" not in content:
             return
-
-        if "Blocker" in content:
-            flag = "Blocker"
-        elif "Pass" in content:
-            flag = "Pass"
-        else:
+        # The Engineer handles Blocker; the Tester only acts on Pass.
+        if "Pass" not in content:
             return
 
         self._tested_rooms.add(room_id)
-        log.info("[Tester] Verdict '%s' received in room %s", flag, room_id)
+        log.info("[Tester] Pass verdict received in room %s", room_id)
 
-        mentions = self._reviewer_mention(tools)
+        mentions = self._architect_mention(tools)
         if not mentions:
             log.warning("[Tester] no peers to mention — skipping reply")
             return
 
-        if flag == "Blocker":
-            await tools.send_message(
-                "Blocker detected — skipping test generation. Waiting for fixes.",
-                mentions=mentions,
+        # Fetch the Architect's PR context message (carries diff + source payload).
+        pr_context = ""
+        source_files: dict[str, str] = {}
+        try:
+            ctx = await tools.fetch_room_context(room_id=room_id, page_size=100)
+            for m in ctx.get("data", []):
+                c = m.get("content") or ""
+                if "## Diff summary" in c:
+                    pr_context = c
+                    source_files = parse_files(c)
+                    break
+        except Exception:
+            log.warning("[Tester] could not fetch room context")
+
+        if config.enable_test_execution() and source_files:
+            await self._run_real_tests(source_files, pr_context, tools, mentions, room_id)
+        else:
+            await self._describe_tests(pr_context, tools, mentions, room_id)
+
+    # --- real execution path -------------------------------------------- #
+    async def _run_real_tests(
+        self,
+        source_files: dict[str, str],
+        pr_context: str,
+        tools: AgentToolsProtocol,
+        mentions: list[str],
+        room_id: str,
+    ) -> None:
+        files_blob = "\n\n".join(
+            f"# === {path} ===\n{content}" for path, content in source_files.items()
+        )
+        try:
+            response = self._client.chat.completions.create(
+                model=self._model,
+                max_tokens=4096,
+                response_format={"type": "json_object"},
+                messages=[
+                    {"role": "system", "content": _EXEC_SYSTEM_PROMPT},
+                    {"role": "user", "content": files_blob},
+                ],
             )
+            parsed = json.loads(response.choices[0].message.content.strip())
+            test_code = parsed.get("test_code", "")
+            explanation = parsed.get("explanation", "")
+        except Exception:
+            log.exception("[Tester] test-generation LLM call failed")
+            await self._describe_tests(pr_context, tools, mentions, room_id)
             return
 
-        # Fetch room history to find the Architect's PR context message.
-        pr_context: str | None = None
-        try:
-            ctx = await tools.fetch_room_context(room_id=room_id, page_size=20)
-            pr_context = next(
-                (
-                    m.get("content", "")
-                    for m in ctx.get("data", [])
-                    if "## Diff summary" in (m.get("content") or "")
-                ),
-                None,
-            )
-        except Exception:
-            log.warning("[Tester] could not fetch room context; using event content")
+        if not test_code.strip():
+            await self._describe_tests(pr_context, tools, mentions, room_id)
+            return
 
-        user_content = pr_context or "(no PR context available)"
+        returncode, output = test_runner.run_pytest(source_files, test_code)
+        status = "✅ PASSED" if returncode == 0 else (
+            "⚠️ NO TESTS COLLECTED" if returncode == 5 else "❌ FAILED"
+        )
+        message = (
+            f"## Test Results\n\n"
+            f"**{status}** (pytest exit code {returncode})\n\n"
+            f"{explanation}\n\n"
+            f"```\n{output}\n```\n\n"
+            f"<details><summary>Generated test</summary>\n\n"
+            f"```python\n{test_code}\n```\n</details>"
+        )
+        await tools.send_message(message, mentions=mentions)
+        log.info("[Tester] Real test results posted (exit %d) to room %s", returncode, room_id)
 
+    # --- description-only fallback -------------------------------------- #
+    async def _describe_tests(
+        self,
+        pr_context: str,
+        tools: AgentToolsProtocol,
+        mentions: list[str],
+        room_id: str,
+    ) -> None:
         try:
             response = self._client.chat.completions.create(
                 model=self._model,
                 max_tokens=4096,
                 messages=[
                     {"role": "system", "content": _TESTER_SYSTEM_PROMPT},
-                    {"role": "user", "content": user_content},
+                    {"role": "user", "content": pr_context or "(no PR context available)"},
                 ],
             )
             test_output = response.choices[0].message.content.strip()
@@ -149,8 +206,5 @@ class TesterAdapter(SimpleAdapter[Any]):
             log.exception("[Tester] LLM call failed")
             test_output = "Test generation failed — LLM error."
 
-        await tools.send_message(
-            f"## Tests & Docs\n\n{test_output}",
-            mentions=mentions,
-        )
+        await tools.send_message(f"## Tests & Docs\n\n{test_output}", mentions=mentions)
         log.info("[Tester] Tests & docs posted to room %s", room_id)

@@ -11,7 +11,7 @@ import threading
 from flask import Flask, abort, request
 
 import config
-from agents.architect_handler import handle_pr_event
+from agents.architect_handler import handle_issue_comment, handle_pr_event
 
 logging.basicConfig(
     level=logging.INFO,
@@ -39,28 +39,34 @@ def webhook() -> tuple[str, int]:
         abort(401)
 
     event = request.headers.get("X-GitHub-Event", "")
-    if event != "pull_request":
-        return "ok", 200
-
     payload = request.get_json(force=True) or {}
     action = payload.get("action", "")
-    if action not in ("opened", "synchronize", "reopened"):
+    repo_name = payload.get("repository", {}).get("full_name", "?")
+
+    # Run async handlers in a daemon thread so Flask returns 200 immediately.
+    # GitHub webhooks time out at 10 s; the Band room setup takes ~5 s.
+    def _dispatch(coro_fn) -> None:
+        threading.Thread(target=lambda: asyncio.run(coro_fn(payload)), daemon=True).start()
+
+    if event == "pull_request":
+        if action not in ("opened", "synchronize", "reopened"):
+            return "ok", 200
+        pr_info = payload.get("pull_request", {})
+        log.info("PR %s #%s (%s) — spinning up Architect",
+                 repo_name, pr_info.get("number", "?"), action)
+        _dispatch(handle_pr_event)
         return "ok", 200
 
-    pr_info = payload.get("pull_request", {})
-    log.info(
-        "PR %s #%s (%s) — spinning up Architect",
-        payload.get("repository", {}).get("full_name", "?"),
-        pr_info.get("number", "?"),
-        action,
-    )
+    if event == "issue_comment":
+        # Only newly created comments; the handler filters out non-PR and
+        # bot-authored comments to avoid feedback loops.
+        if action != "created":
+            return "ok", 200
+        log.info("Comment on %s #%s — relaying to Band",
+                 repo_name, payload.get("issue", {}).get("number", "?"))
+        _dispatch(handle_issue_comment)
+        return "ok", 200
 
-    # Run the async handler in a daemon thread so Flask returns 200 immediately.
-    # GitHub webhooks time out at 10 s; the Band room setup takes ~5 s.
-    def _run() -> None:
-        asyncio.run(handle_pr_event(payload))
-
-    threading.Thread(target=_run, daemon=True).start()
     return "ok", 200
 
 
