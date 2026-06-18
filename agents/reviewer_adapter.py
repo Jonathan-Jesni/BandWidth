@@ -15,13 +15,11 @@ human's GitHub comment, it answers with "## Answer" (mentioning the Architect).
 from __future__ import annotations
 
 import logging
-import os
 from typing import Any
-
-import openai
 
 import config
 from agents import llm
+from agents.events import emit_task
 from agents.room_payload import parse_meta
 from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
@@ -60,11 +58,7 @@ class ReviewerAdapter(SimpleAdapter[Any]):
         self._reviewed_rooms: set[str] = set()
         self._answered: set[str] = set()
         self._cycles: dict[tuple[str, str], int] = {}
-        self._client = openai.OpenAI(
-            api_key=os.environ["FEATHERLESS_API_KEY"],
-            base_url="https://api.featherless.ai/v1",
-        )
-        self._model = "deepseek-ai/DeepSeek-V4-Pro"
+        self._client, self._model = llm.build(config.provider_for("reviewer"))
 
     # --- identity / mention helpers ------------------------------------- #
     def _self_id(self) -> str | None:
@@ -142,6 +136,7 @@ class ReviewerAdapter(SimpleAdapter[Any]):
         self, content: str, tools: AgentToolsProtocol, room_id: str
     ) -> None:
         log.info("[Reviewer] PR context received in room %s — calling LLM", room_id)
+        await emit_task(tools, "Reviewer", "reviewing")
 
         # Track review cycles per PR so the push→synchronize storm always settles.
         meta = parse_meta(content)
@@ -168,6 +163,7 @@ class ReviewerAdapter(SimpleAdapter[Any]):
             flag = "Pass"
 
         log.info("[Reviewer] Verdict: %s (cycle %d)", flag, cycle)
+        await emit_task(tools, "Reviewer", f"verdict:{flag}", model=self._model, cycle=cycle)
 
         arch_mentions = self._architect_mention(tools)
         if arch_mentions:

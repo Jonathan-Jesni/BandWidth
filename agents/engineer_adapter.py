@@ -14,10 +14,7 @@ from __future__ import annotations
 
 import base64
 import logging
-import os
 from typing import Any
-
-import openai
 
 import config
 from agents import llm
@@ -26,6 +23,7 @@ from agents.architect_handler import (
     _github_request,
     fetch_room_context_as_architect,
 )
+from agents.events import emit_task
 from agents.room_payload import parse_files, parse_meta
 from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
@@ -58,11 +56,7 @@ class EngineerAdapter(SimpleAdapter[Any]):
         super().__init__(history_converter=None)
         self._handled_rooms: set[str] = set()
         self._fix_attempts: dict[tuple[str, str], int] = {}
-        self._client = openai.OpenAI(
-            api_key=os.environ["FEATHERLESS_API_KEY"],
-            base_url="https://api.featherless.ai/v1",
-        )
-        self._model = "deepseek-ai/DeepSeek-V4-Pro"
+        self._client, self._model = llm.build(config.provider_for("engineer"))
 
     def _self_id(self) -> str | None:
         return getattr(self, "_band_agent_id", None)
@@ -107,6 +101,7 @@ class EngineerAdapter(SimpleAdapter[Any]):
 
         self._handled_rooms.add(room_id)
         log.info("[Engineer] Blocker verdict received in room %s", room_id)
+        await emit_task(tools, "Engineer", "fixing", model=self._model)
 
         mentions = self._architect_mention(tools)
 
@@ -193,8 +188,10 @@ class EngineerAdapter(SimpleAdapter[Any]):
                 f"({commit_message}):\n{files_list}\n\n"
                 f"A new review cycle will start automatically.",
             )
+            await emit_task(tools, "Engineer", "pushed", files=len(pushed), branch=branch, model=self._model)
             log.info("[Engineer] pushed %d file(s) to %s@%s", len(pushed), head_repo, branch)
         else:
+            await emit_task(tools, "Engineer", "fix:failed")
             await self._post(tools, mentions, "## Auto-Fix Failed\n\nNo files could be pushed.")
 
     # --- helpers -------------------------------------------------------- #

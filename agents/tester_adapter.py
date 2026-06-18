@@ -12,14 +12,12 @@ Watches for the Reviewer's "## Verdict" message. On "Pass":
 from __future__ import annotations
 
 import logging
-import os
 from typing import Any
-
-import openai
 
 import config
 from agents import llm, test_runner
 from agents.architect_handler import fetch_room_context_as_architect
+from agents.events import emit_task
 from agents.room_payload import parse_files
 from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
@@ -56,11 +54,7 @@ class TesterAdapter(SimpleAdapter[Any]):
     def __init__(self) -> None:
         super().__init__(history_converter=None)
         self._tested_rooms: set[str] = set()
-        self._client = openai.OpenAI(
-            api_key=os.environ["FEATHERLESS_API_KEY"],
-            base_url="https://api.featherless.ai/v1",
-        )
-        self._model = "deepseek-ai/DeepSeek-V4-Pro"
+        self._client, self._model = llm.build(config.provider_for("tester"))
 
     def _self_id(self) -> str | None:
         return getattr(self, "_band_agent_id", None)
@@ -110,6 +104,7 @@ class TesterAdapter(SimpleAdapter[Any]):
 
         self._tested_rooms.add(room_id)
         log.info("[Tester] Pass verdict received in room %s", room_id)
+        await emit_task(tools, "Tester", "testing")
 
         mentions = self._architect_mention(tools)
         if not mentions:
@@ -172,6 +167,11 @@ class TesterAdapter(SimpleAdapter[Any]):
             f"```python\n{test_code}\n```\n</details>"
         )
         await tools.send_message(message, mentions=mentions)
+        await emit_task(
+            tools, "Tester",
+            "tests:passed" if returncode == 0 else "tests:failed",
+            exit_code=returncode, model=self._model,
+        )
         log.info("[Tester] Real test results posted (exit %d) to room %s", returncode, room_id)
 
     # --- description-only fallback -------------------------------------- #

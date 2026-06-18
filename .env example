@@ -12,10 +12,24 @@ TESTER_API_KEY="your-tester-key"
 ENGINEER_AGENT_ID="your-engineer-uuid"
 ENGINEER_API_KEY="your-engineer-key"
 
-# LLM Providers
+# LLM Providers — BandWidth is cross-model: agents reason on different providers,
+# coordinated through Band. Featherless serves open-source inference (DeepSeek);
+# AI/ML API serves a hosted frontier model. Both are OpenAI-compatible.
 ANTHROPIC_API_KEY="your-claude-key"
 FEATHERLESS_API_KEY="your-featherless-key"
 AIML_API_KEY="your-aiml-key"
+
+# Model overrides (optional)
+FEATHERLESS_MODEL="deepseek-ai/DeepSeek-V4-Pro"
+AIML_MODEL="gpt-4o-mini"        # bump to gpt-4o for the final demo recording
+
+# Per-role provider overrides (optional): featherless | aimlapi.
+# Default topology — Reviewer/Tester on Featherless, Engineer/Architect on AI/ML API.
+# If AIML_API_KEY is unset, those roles fall back to Featherless automatically.
+REVIEWER_PROVIDER="featherless"
+TESTER_PROVIDER="featherless"
+ENGINEER_PROVIDER="aimlapi"
+ARCHITECT_PROVIDER="aimlapi"
 
 # GitHub integration
 GITHUB_TOKEN="your-github-pat"

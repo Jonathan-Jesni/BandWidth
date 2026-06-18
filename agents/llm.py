@@ -16,10 +16,23 @@ import logging
 import re
 import time
 
+import openai
+
 log = logging.getLogger(__name__)
 
 _ATTEMPTS = 3  # one initial try + two retries on transient API errors
 _FENCE_RE = re.compile(r"```(?:json)?\s*(.*?)```", re.DOTALL)
+
+
+def build(provider) -> tuple[openai.OpenAI, str]:
+    """Construct an OpenAI-compatible client + default model for a config.Provider.
+
+    Lets each agent run on a different inference provider (Featherless, AI/ML API)
+    while sharing the same completion helpers below.
+    """
+    client = openai.OpenAI(api_key=provider.api_key, base_url=provider.base_url)
+    log.info("LLM client built: provider=%s model=%s", provider.name, provider.model)
+    return client, provider.model
 
 
 def _create(client, model, system, user, *, max_tokens, json_mode):

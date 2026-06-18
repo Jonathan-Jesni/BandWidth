@@ -51,6 +51,22 @@ GitHub PR Event
    LLM-generated pytest file into a `tempfile.TemporaryDirectory()` and runs
    `pytest` in a sandboxed subprocess, posting the **real** pass/fail output.
 
+### Cross-model topology
+
+BandWidth is a **cross-model** multi-agent system — different agents reason on
+different inference providers, all coordinated through Band:
+
+| Agent | Provider | Model |
+|-------|----------|-------|
+| Reviewer, Tester | **Featherless** (open-source inference) | `deepseek-ai/DeepSeek-V4-Pro` |
+| Engineer, Architect-planner | **AI/ML API** (hosted frontier) | `AIML_MODEL` (default `gpt-4o-mini`) |
+
+Providers are pure config (`config.provider_for(role)`, override with
+`{ROLE}_PROVIDER`), built through `agents/llm.py`. If `AIML_API_KEY` is unset, those
+roles fall back to Featherless so the system always runs. Each agent also emits Band
+**task-progress events** (`message_type="task"`) per stage, so the coordination state
+is visible as a first-class Band primitive — not just chat.
+
 > ⚠️ **Security:** `ENABLE_TEST_EXECUTION` runs LLM/PR-supplied code and
 > `ENABLE_AUTO_FIX` mutates the PR branch. Both are **off by default**. Test
 > execution is sandboxed (subprocess + temp dir + timeout + scrubbed env) but is

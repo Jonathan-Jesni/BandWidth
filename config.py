@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass
 
 from dotenv import load_dotenv
 
 load_dotenv()
+
+log = logging.getLogger(__name__)
 
 # Placeholder values shipped in `.env example`. If any of these survive into the
 # real environment, the credential was never filled in.
@@ -105,3 +108,71 @@ def enable_auto_fix() -> bool:
     branch, so it must be opted into deliberately (ENABLE_AUTO_FIX=1).
     """
     return _flag("ENABLE_AUTO_FIX")
+
+
+# --------------------------------------------------------------------------- #
+# LLM providers — BandWidth is a cross-model system: different agents reason on
+# different providers, coordinated through Band. Featherless serves open-source
+# inference (DeepSeek-V4-Pro); AI/ML API serves a hosted frontier model. Both are
+# OpenAI-compatible, so an agent only needs (api_key, base_url, model).
+# --------------------------------------------------------------------------- #
+@dataclass(frozen=True)
+class Provider:
+    """An OpenAI-compatible inference provider + the default model to use on it."""
+
+    name: str
+    api_key: str
+    base_url: str
+    model: str
+
+
+def _usable(value: str | None) -> bool:
+    """True if an env value is present and not a shipped placeholder."""
+    if not value:
+        return False
+    lowered = value.lower()
+    return not any(fragment in lowered for fragment in _PLACEHOLDER_FRAGMENTS)
+
+
+def featherless_provider() -> Provider:
+    return Provider(
+        name="featherless",
+        api_key=require("FEATHERLESS_API_KEY"),
+        base_url="https://api.featherless.ai/v1",
+        model=os.getenv("FEATHERLESS_MODEL", "deepseek-ai/DeepSeek-V4-Pro"),
+    )
+
+
+def aiml_provider() -> Provider:
+    return Provider(
+        name="aimlapi",
+        api_key=require("AIML_API_KEY"),
+        base_url="https://api.aimlapi.com/v1",
+        model=os.getenv("AIML_MODEL", "gpt-4o-mini"),
+    )
+
+
+# Default cross-model topology: open-source reviewers/testers on Featherless,
+# frontier engineer/planner on AI/ML API. Override per role with {ROLE}_PROVIDER.
+_DEFAULT_PROVIDER = {
+    "reviewer": "featherless",
+    "tester": "featherless",
+    "engineer": "aimlapi",
+    "architect": "aimlapi",
+}
+
+
+def provider_for(role: str) -> Provider:
+    """Return the inference Provider for a role.
+
+    Honors a `{ROLE}_PROVIDER` env override, then the default topology. Falls back
+    to Featherless (with a warning) if the chosen provider's key isn't configured,
+    so the system still runs with a single provider key.
+    """
+    choice = os.getenv(f"{role.upper()}_PROVIDER", _DEFAULT_PROVIDER.get(role, "featherless"))
+    choice = choice.strip().lower()
+    if choice == "aimlapi" and _usable(os.getenv("AIML_API_KEY")):
+        return aiml_provider()
+    if choice == "aimlapi":
+        log.warning("provider_for(%s): AIML_API_KEY not configured — using Featherless", role)
+    return featherless_provider()

@@ -22,11 +22,25 @@ import time
 import requests
 
 import config
+from agents import llm
+from agents.events import emit_task
 from agents.room_payload import build_files, build_meta, strip_payload
 from band import AgentTools
 from band.platform import BandLink
 
 log = logging.getLogger(__name__)
+
+_EVENT_SUBTYPES = {"tool_call", "tool_result", "thought", "error", "task"}
+
+_PLAN_SYSTEM_PROMPT = """\
+You are the planning architect for an automated code review. Given a PR's diff
+summary and the list of changed files, output ONLY valid JSON:
+{
+  "risk": "low | medium | high",
+  "focus": "the 1-3 files or areas reviewers should scrutinize most",
+  "strategy": "one or two sentences on what the review should prioritize"
+}
+Be terse and concrete."""
 
 _GITHUB_API = "https://api.github.com"
 _DIFF_CAP = 4000  # chars of human-readable diff summary
@@ -184,6 +198,34 @@ def _fetch_modified_sources(
     return sources
 
 
+def _plan(diff_summary: str, sources: dict[str, str]) -> str:
+    """Run the Architect's planning step on the AI/ML-API model (cross-model).
+
+    Triages the change and sets a review strategy, rendered as a `## Plan` block.
+    Optional + best-effort: returns "" if the provider/LLM is unavailable.
+    """
+    try:
+        client, model = llm.build(config.provider_for("architect"))
+    except Exception:
+        log.warning("Planner: no usable provider — skipping plan")
+        return ""
+    files_list = ", ".join(sources.keys()) or "(no source embedded)"
+    user = f"## Diff summary\n{diff_summary}\n\nChanged files: {files_list}"
+    parsed = llm.complete_json(client, model, _PLAN_SYSTEM_PROMPT, user, max_tokens=400)
+    if not parsed:
+        return ""
+    risk = str(parsed.get("risk", "") or "unknown").strip()
+    focus = str(parsed.get("focus", "") or "").strip()
+    strategy = str(parsed.get("strategy", "") or "").strip()
+    lines = [f"## Plan\n", f"- **Risk:** {risk}"]
+    if focus:
+        lines.append(f"- **Focus:** {focus}")
+    if strategy:
+        lines.append(f"- **Strategy:** {strategy}")
+    lines.append(f"- _Planned by {model} (cross-model)._")
+    return "\n".join(lines)
+
+
 def _post_github_comment(repo: str, pr_number: int, token: str, body: str) -> None:
     if len(body) > _COMMENT_CAP:
         body = body[:_COMMENT_CAP] + "\n\n…(comment truncated)"
@@ -269,6 +311,8 @@ async def _wait_for_marker(
 def _format_transcript(messages: list[dict]) -> str:
     lines = ["## BandWidth AI Review\n"]
     for m in messages:
+        if m.get("message_type") in _EVENT_SUBTYPES:
+            continue  # keep task/telemetry events out of the GitHub transcript
         sender = m.get("sender_name") or m.get("sender_id", "Agent")
         content = strip_payload(m.get("content") or "")
         if not content:
@@ -301,6 +345,10 @@ async def handle_pr_event(payload: dict) -> None:
         sources = _fetch_modified_sources(head_repo, head_ref, files, token)
         log.info("PR #%d: embedded %d source file(s)", pr_number, len(sources))
 
+        # Planning stage: the Architect triages the change on the AI/ML-API model.
+        plan = _plan(diff_summary, sources)
+        plan_block = f"{plan}\n\n" if plan else ""
+
         # Build the opening message (human-readable + hidden machine payload).
         body_snippet = (
             pr_body[:400] + ("…" if len(pr_body) > 400 else "")
@@ -311,6 +359,7 @@ async def handle_pr_event(payload: dict) -> None:
             f"PR #{pr_number}: {pr_title}\n"
             f"{pr_url}\n\n"
             f"{body_snippet}\n\n"
+            f"{plan_block}"
             f"## Diff summary\n"
             f"{diff_summary}\n\n"
             f"{build_files(sources)}\n"
@@ -344,7 +393,9 @@ async def handle_pr_event(payload: dict) -> None:
         # Give agents time to join and complete their initial sync.
         await asyncio.sleep(3)
 
+        await emit_task(tools, "Architect", "planned", files=len(sources))
         await tools.send_message(opening, mentions=mentions)
+        await emit_task(tools, "Architect", "seeded:awaiting-review")
         log.info("PR #%d: Opening message posted to room %s", pr_number, room_id)
 
         # Wait for a terminal message, then post the full transcript to GitHub.
