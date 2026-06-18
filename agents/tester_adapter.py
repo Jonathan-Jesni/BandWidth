@@ -138,7 +138,7 @@ class TesterAdapter(SimpleAdapter[Any]):
         try:
             response = self._client.chat.completions.create(
                 model=self._model,
-                max_tokens=1024,
+                max_tokens=4096,
                 messages=[
                     {"role": "system", "content": _TESTER_SYSTEM_PROMPT},
                     {"role": "user", "content": user_content},
