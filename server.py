@@ -8,7 +8,7 @@ import hmac
 import logging
 import threading
 
-from flask import Flask, abort, request
+from flask import Flask, abort, jsonify, request
 
 import config
 from agents.architect_handler import handle_issue_comment, handle_pr_event
@@ -20,6 +20,72 @@ logging.basicConfig(
 log = logging.getLogger("server")
 
 app = Flask(__name__)
+
+_REPO_URL = "https://github.com/Jonathan-Jesni/BandWidth"
+
+# Self-contained (no external assets) on-brand status page. This URL is the one
+# link a judge is most likely to click, so it doubles as a 10-second pitch.
+_LANDING_HTML = """\
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BandWidth — The Autonomous Code-Review Crew</title>
+<style>
+  :root{ --bg:#0a0f24; --bg2:#111a3e; --card:#141c3c; --stroke:#2e3a6e;
+    --cyan:#22d3ee; --text:#eef2ff; --muted:#aab6e6; --dim:#8190c4; --green:#34d399; }
+  *{box-sizing:border-box} html,body{margin:0;height:100%}
+  body{ background:radial-gradient(1200px 600px at 50% -10%, #1b1147 0%, var(--bg) 60%);
+    color:var(--text); font-family:"Segoe UI",system-ui,-apple-system,sans-serif;
+    display:flex; align-items:center; justify-content:center; padding:32px; }
+  .wrap{ width:100%; max-width:760px; }
+  .status{ display:inline-flex; align-items:center; gap:8px; font-size:13px; font-weight:600;
+    color:var(--green); background:rgba(52,211,153,.1); border:1px solid rgba(52,211,153,.35);
+    padding:6px 14px; border-radius:999px; letter-spacing:.3px; }
+  .dot{ width:8px; height:8px; border-radius:50%; background:var(--green);
+    box-shadow:0 0 0 0 rgba(52,211,153,.7); animation:pulse 2s infinite; }
+  @keyframes pulse{ 0%{box-shadow:0 0 0 0 rgba(52,211,153,.6)} 70%{box-shadow:0 0 0 10px rgba(52,211,153,0)} 100%{box-shadow:0 0 0 0 rgba(52,211,153,0)} }
+  h1{ font-size:54px; margin:22px 0 6px; letter-spacing:-1px; }
+  h1 .w{ color:var(--cyan); }
+  .tag{ font-size:20px; color:var(--muted); font-weight:500; margin:0 0 28px; }
+  .lead{ font-size:16px; color:var(--muted); line-height:1.6; max-width:620px; }
+  .chips{ display:flex; flex-wrap:wrap; gap:10px; margin:26px 0 30px; }
+  .chip{ font-size:13.5px; font-weight:600; color:var(--text); background:var(--card);
+    border:1px solid var(--stroke); padding:8px 14px; border-radius:10px; }
+  .chip b{ color:var(--cyan); font-weight:700; }
+  .cta{ display:inline-flex; align-items:center; gap:10px; text-decoration:none;
+    background:var(--cyan); color:#06121b; font-weight:700; font-size:16px;
+    padding:13px 22px; border-radius:12px; }
+  .cta:hover{ filter:brightness(1.07); }
+  .foot{ margin-top:34px; font-size:12.5px; color:var(--dim); }
+  .foot b{ color:var(--muted); }
+</style>
+</head>
+<body>
+  <main class="wrap">
+    <span class="status"><span class="dot"></span>SYSTEM LIVE</span>
+    <h1>Band<span class="w">Width</span></h1>
+    <p class="tag">The Autonomous Code-Review Crew</p>
+    <p class="lead">Five specialized AI agents collaborate <b>through Band</b> to plan,
+      review, fix, test, and document every GitHub pull request — and escalate to a human
+      the moment they're genuinely stuck.</p>
+    <div class="chips">
+      <span class="chip"><b>1</b> Architect</span>
+      <span class="chip"><b>2</b> Reviewer</span>
+      <span class="chip"><b>3</b> Engineer</span>
+      <span class="chip"><b>4</b> Tester</span>
+      <span class="chip"><b>5</b> Documenter</span>
+    </div>
+    <p class="lead" style="margin-bottom:22px">This is the webhook listener. The product
+      experience lives in the GitHub pull request thread the crew operates on.</p>
+    <a class="cta" href="%REPO%">View the agents in action on GitHub &rarr;</a>
+    <p class="foot">Webhook listener &middot; <b>POST /webhook</b> &middot; health at
+      <b>/health</b> &middot; built by <b>Dev Duo</b></p>
+  </main>
+</body>
+</html>
+""".replace("%REPO%", _REPO_URL)
 
 
 def _verify_signature(body: bytes, sig_header: str) -> bool:
@@ -33,7 +99,14 @@ def _verify_signature(body: bytes, sig_header: str) -> bool:
 
 @app.route("/", methods=["GET"])
 def index() -> str:
-    return "<h1>BandWidth is Live! 🚀</h1><p>This is the webhook listener server for the BandWidth multi-agent system. The actual user interface is your GitHub Pull Requests! Go open a PR on <a href='https://github.com/Jonathan-Jesni/BandWidth'>our repository</a> to see the agents in action.</p>", 200
+    return _LANDING_HTML
+
+
+@app.route("/health", methods=["GET"])
+def health():
+    """Lightweight health check for uptime pings / load balancers."""
+    return jsonify(status="ok", service="bandwidth-webhook"), 200
+
 
 @app.route("/webhook", methods=["POST"])
 def webhook() -> tuple[str, int]:

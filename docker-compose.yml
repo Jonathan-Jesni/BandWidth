@@ -24,6 +24,18 @@ services:
     command: ["python", "server.py"]
     ports:
       - "5000:5000"
+    # Probe /health from inside the container. The image has no curl, so use
+    # Python stdlib (no extra packages). `restart: unless-stopped` only reacts to
+    # crashes — the autoheal sidecar below restarts the container if this goes
+    # unhealthy (e.g. a wedged/deadlocked server that's still "running").
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:5000/health', timeout=3).status==200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    labels:
+      - autoheal=true
 
   architect:
     <<: *bandwidth
@@ -49,3 +61,17 @@ services:
     <<: *bandwidth
     container_name: bandwidth-documenter
     command: ["python", "-m", "agents.documenter"]
+
+  # Watches for containers labelled `autoheal=true` that Docker has marked
+  # `unhealthy` and restarts them — plain compose won't restart on unhealthy by
+  # itself. Needs the Docker socket to issue the restart (host Docker control;
+  # fine on a single-purpose demo VM).
+  autoheal:
+    image: willfarrell/autoheal:latest
+    container_name: bandwidth-autoheal
+    restart: unless-stopped
+    environment:
+      AUTOHEAL_CONTAINER_LABEL: autoheal
+      AUTOHEAL_INTERVAL: "10"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
