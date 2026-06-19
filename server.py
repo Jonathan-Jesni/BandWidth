@@ -31,199 +31,208 @@ _LANDING_HTML = """\
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>BandWidth — The Autonomous Code-Review Crew</title>
+<title>bandwidth — the autonomous code-review crew</title>
 <style>
   :root{
-    --bg:#070b16; --ink:#f4f7ff; --muted:#9aa7c7; --faint:#64709a;
-    --line:rgba(140,160,210,.14); --line-2:rgba(140,160,210,.28);
-    --accent:#4fe3d6; --accent-2:#5ab0ff; --panel:rgba(255,255,255,.02);
-    --ease:cubic-bezier(.16,.84,.44,1);
-    --mono:ui-monospace,"SF Mono","Cascadia Code",Menlo,Consolas,monospace;
-    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,Helvetica,Arial,sans-serif;
+    --bg:#0c0c0c; --panel:#101010; --panel-2:#0e0e0e;
+    --line:rgba(255,255,255,.08); --line-2:rgba(255,255,255,.14);
+    --fg:#d7d7cf; --dim:#6b716a; --bright:#f2f2ec;
+    --accent:#4ade80; --accent-dim:#2f7d4f;
+    --ease:cubic-bezier(.2,.7,.3,1);
+    --mono:ui-monospace,"SF Mono","JetBrains Mono","Cascadia Code",Menlo,Consolas,monospace;
   }
   *{box-sizing:border-box;margin:0;padding:0}
-  html,body{height:100%}
+  html{height:100%}
   body{
-    background:var(--bg); color:var(--ink); font-family:var(--sans);
-    -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility;
-    min-height:100%; display:flex; flex-direction:column;
-    position:relative; overflow-x:hidden;
+    min-height:100%; background:var(--bg); color:var(--fg);
+    font-family:var(--mono); font-size:15px; line-height:1.6;
+    -webkit-font-smoothing:antialiased;
+    display:flex; flex-direction:column; position:relative; overflow-x:hidden;
   }
-  /* ambient: one faint off-center wash + a hairline grid, no candy gradients */
+  /* one faint vignette only — no scanlines */
   body::before{
     content:""; position:fixed; inset:0; z-index:0; pointer-events:none;
-    background:
-      radial-gradient(900px 520px at 78% -8%, rgba(79,227,214,.10), transparent 60%),
-      radial-gradient(760px 600px at 8% 108%, rgba(90,176,255,.08), transparent 55%);
+    background:radial-gradient(1100px 700px at 50% 0%, rgba(74,222,128,.05), transparent 60%);
   }
-  body::after{
-    content:""; position:fixed; inset:0; z-index:0; pointer-events:none; opacity:.5;
-    background-image:linear-gradient(var(--line) 1px,transparent 1px),
-      linear-gradient(90deg,var(--line) 1px,transparent 1px);
-    background-size:64px 64px; -webkit-mask-image:radial-gradient(circle at 50% 30%,#000,transparent 78%);
-    mask-image:radial-gradient(circle at 50% 30%,#000,transparent 78%);
-  }
-  .shell{ position:relative; z-index:1; width:100%; max-width:1080px;
-    margin:0 auto; padding:40px clamp(22px,5vw,64px); flex:1 0 auto;
-    display:flex; flex-direction:column; }
+  .wrap{ position:relative; z-index:1; width:100%; max-width:920px;
+    margin:0 auto; padding:clamp(20px,4vw,40px); flex:1 0 auto;
+    display:flex; flex-direction:column; min-width:0; }
 
   /* top bar */
-  .bar{ display:flex; align-items:center; justify-content:space-between; gap:16px; }
-  .brand{ display:flex; align-items:center; gap:11px; font-weight:600; letter-spacing:-.01em; }
-  .glyph{ width:26px; height:26px; border-radius:7px; position:relative;
-    background:linear-gradient(135deg,var(--accent),var(--accent-2)); }
-  .glyph::after{ content:""; position:absolute; inset:7px; border-radius:3px; background:var(--bg); }
-  .brand b{ font-size:16px; font-weight:650; }
-  .status{ display:inline-flex; align-items:center; gap:9px;
-    font:600 11px/1 var(--mono); letter-spacing:.16em; text-transform:uppercase;
-    color:var(--muted); border:1px solid var(--line-2); border-radius:999px; padding:8px 13px; }
-  .live{ width:7px; height:7px; border-radius:50%; background:var(--accent);
-    box-shadow:0 0 0 4px rgba(79,227,214,.16); animation:breathe 3.2s var(--ease) infinite; }
-  @keyframes breathe{ 0%,100%{opacity:.55} 50%{opacity:1} }
+  .bar{ display:flex; align-items:center; justify-content:space-between;
+    gap:16px; margin-bottom:clamp(22px,4vh,38px); }
+  .brand{ display:flex; align-items:baseline; gap:2px; color:var(--bright);
+    font-weight:600; font-size:15px; letter-spacing:.02em; }
+  .brand .pmt{ color:var(--accent); margin-right:8px; }
+  .caret{ display:inline-block; width:8px; height:1.05em; transform:translateY(2px);
+    margin-left:4px; background:var(--accent); animation:blink 1.1s steps(1) infinite; }
+  @keyframes blink{ 0%,50%{opacity:1} 50.01%,100%{opacity:0} }
+  .online{ display:inline-flex; align-items:center; gap:8px; color:var(--dim);
+    font-size:12px; letter-spacing:.04em; }
+  .online .dot{ width:7px; height:7px; border-radius:50%; background:var(--accent);
+    box-shadow:0 0 8px rgba(74,222,128,.7); animation:breathe 2.6s var(--ease) infinite; }
+  @keyframes breathe{ 0%,100%{opacity:.5} 50%{opacity:1} }
 
-  /* hero */
-  .hero{ margin-top:clamp(56px,11vh,128px); max-width:760px; }
-  .eyebrow{ font:600 12px/1 var(--mono); letter-spacing:.2em; text-transform:uppercase;
-    color:var(--accent); margin-bottom:22px; }
-  h1{ font-size:clamp(44px,8.5vw,92px); line-height:.96; letter-spacing:-.035em; font-weight:680; }
-  h1 .w{ color:transparent; background:linear-gradient(120deg,var(--accent),var(--accent-2));
-    -webkit-background-clip:text; background-clip:text; }
-  .tag{ margin-top:18px; font-size:clamp(17px,2.4vw,21px); color:var(--ink); font-weight:500; opacity:.92; }
-  .lead{ margin-top:20px; max-width:600px; font-size:16px; line-height:1.65; color:var(--muted); }
-  .lead em{ color:var(--ink); font-style:normal; font-weight:600; }
+  /* terminal panel */
+  .term{ border:1px solid var(--line); border-radius:12px; background:var(--panel);
+    box-shadow:0 24px 60px -30px rgba(0,0,0,.9), inset 0 1px 0 rgba(255,255,255,.03);
+    overflow:hidden; }
+  .term-head{ display:flex; align-items:center; gap:12px;
+    padding:12px 16px; border-bottom:1px solid var(--line); background:var(--panel-2); }
+  .dots{ display:flex; gap:7px; }
+  .dots i{ width:11px; height:11px; border-radius:50%; background:#2a2a2a; }
+  .term-head .path{ color:var(--dim); font-size:12.5px; }
+  .term-head .tab{ margin-left:auto; color:var(--dim); font-size:11.5px;
+    border:1px solid var(--line); border-radius:6px; padding:3px 9px; letter-spacing:.05em; }
+  .term-body{ padding:clamp(18px,3.2vw,30px); overflow-x:auto; }
 
-  /* pipeline */
-  .flow{ margin-top:clamp(40px,6vh,64px); }
-  .flow .cap{ font:600 11px/1 var(--mono); letter-spacing:.18em; text-transform:uppercase;
-    color:var(--faint); margin-bottom:16px; }
-  .rail{ position:relative; display:flex; align-items:center; gap:0;
-    overflow-x:auto; padding-bottom:6px; scrollbar-width:none; }
-  .rail::-webkit-scrollbar{ display:none; }
-  .node{ flex:0 0 auto; display:flex; flex-direction:column; align-items:center; gap:9px; min-width:84px; }
-  .pip{ width:11px; height:11px; border-radius:50%; background:#1a2236; border:1px solid var(--line-2);
-    transition:background .4s var(--ease),box-shadow .4s var(--ease),border-color .4s var(--ease); }
-  .node.on .pip{ background:var(--accent); border-color:var(--accent);
-    box-shadow:0 0 0 5px rgba(79,227,214,.14),0 0 14px rgba(79,227,214,.5); }
-  .node span{ font-size:12.5px; color:var(--muted); white-space:nowrap; letter-spacing:.01em;
-    transition:color .4s var(--ease); }
-  .node.on span{ color:var(--ink); }
-  .node small{ font:600 9.5px/1 var(--mono); letter-spacing:.12em; text-transform:uppercase; color:var(--faint); }
-  .seg{ flex:1 1 auto; min-width:24px; height:1px; background:var(--line-2); position:relative; }
-  .endpt span{ color:var(--accent-2); }
+  .line{ white-space:pre; } /* keep command columns honest; body scrolls if narrow */
+  .cmt{ color:var(--dim); }
+  .cmd{ color:var(--bright); margin-top:6px; }
+  .cmd .p{ color:var(--accent); margin-right:10px; }
+  .out{ color:var(--fg); white-space:normal; }            /* prose wraps */
+  .blk{ margin:6px 0 20px; }
+  .blk:last-child{ margin-bottom:0; }
 
-  /* CTA + meta */
-  .row{ margin-top:clamp(40px,6vh,60px); display:flex; flex-wrap:wrap; align-items:center; gap:18px 26px; }
-  .cta{ display:inline-flex; align-items:center; gap:10px; text-decoration:none;
-    font-size:15px; font-weight:650; color:#04120f; background:var(--accent);
-    padding:14px 22px; border-radius:12px; letter-spacing:.005em;
-    transition:transform .3s var(--ease),box-shadow .3s var(--ease),background .3s var(--ease);
-    box-shadow:0 10px 30px -12px rgba(79,227,214,.55); }
-  .cta:hover{ transform:translateY(-2px); box-shadow:0 16px 38px -12px rgba(79,227,214,.7); }
-  .cta .arr{ transition:transform .3s var(--ease); }
+  /* crew list — aligned columns via monospace */
+  .crew{ margin:8px 0 20px; }
+  .crew .r{ display:flex; gap:14px; padding:3px 0; align-items:baseline; }
+  .crew .nm{ color:var(--accent); flex:0 0 124px; }
+  .crew .rl{ color:var(--fg); min-width:0; }
+  @media (max-width:520px){ .crew .nm{ flex-basis:96px } }
+
+  /* run log — streamed */
+  .log .ln{ display:flex; gap:12px; align-items:baseline; padding:2px 0;
+    opacity:0; transform:translateY(6px); }
+  .log .ln.show{ opacity:1; transform:none; transition:opacity .4s var(--ease),transform .4s var(--ease); }
+  .log .tag{ color:var(--accent); flex:0 0 116px; }
+  .log .msg{ color:var(--fg); min-width:0; }
+  .log .msg b{ color:var(--bright); font-weight:600; }
+  .log .ok{ color:var(--accent); }
+  .runcaret{ display:inline-block; width:8px; height:1.05em; transform:translateY(2px);
+    background:var(--accent); opacity:0; }
+  .runcaret.show{ opacity:1; animation:blink 1.1s steps(1) infinite; }
+  @media (max-width:520px){ .log .tag{ flex-basis:96px } }
+
+  /* action row */
+  .row{ margin-top:clamp(26px,4vh,40px); display:flex; flex-wrap:wrap;
+    align-items:center; gap:14px 22px; }
+  .cta{ display:inline-flex; align-items:center; gap:9px; text-decoration:none;
+    font-family:var(--mono); font-size:14px; font-weight:600; color:#06140c;
+    background:var(--accent); padding:12px 20px; border-radius:9px; letter-spacing:.01em;
+    transition:transform .25s var(--ease), box-shadow .25s var(--ease);
+    box-shadow:0 0 0 1px rgba(74,222,128,.4), 0 12px 30px -14px rgba(74,222,128,.7); }
+  .cta:hover{ transform:translateY(-2px); box-shadow:0 0 0 1px rgba(74,222,128,.6),0 18px 38px -14px rgba(74,222,128,.85); }
+  .cta .arr{ transition:transform .25s var(--ease); }
   .cta:hover .arr{ transform:translateX(4px); }
-  .ghost{ font-size:14px; color:var(--muted); text-decoration:none; border-bottom:1px solid var(--line-2);
-    padding-bottom:2px; transition:color .25s var(--ease),border-color .25s var(--ease); }
-  .ghost:hover{ color:var(--ink); border-color:var(--accent); }
+  .ghost{ color:var(--dim); text-decoration:none; font-size:13.5px;
+    border-bottom:1px solid var(--line-2); padding-bottom:2px;
+    transition:color .2s var(--ease), border-color .2s var(--ease); }
+  .ghost:hover{ color:var(--fg); border-color:var(--accent); }
   a:focus-visible,.cta:focus-visible{ outline:2px solid var(--accent); outline-offset:3px; border-radius:6px; }
 
   /* footer */
-  .foot{ position:relative; z-index:1; border-top:1px solid var(--line);
-    margin-top:clamp(48px,8vh,96px); padding:22px clamp(22px,5vw,64px);
-    display:flex; flex-wrap:wrap; gap:10px 22px; align-items:center; justify-content:space-between;
-    max-width:1080px; margin-left:auto; margin-right:auto; width:100%; }
+  .foot{ position:relative; z-index:1; width:100%; max-width:920px;
+    margin:clamp(30px,6vh,56px) auto 0; padding:18px clamp(20px,4vw,40px) 30px;
+    border-top:1px solid var(--line);
+    display:flex; flex-wrap:wrap; gap:12px 20px; align-items:center; justify-content:space-between; }
   .ends{ display:flex; flex-wrap:wrap; gap:8px; }
-  .ends code{ font:500 11.5px/1 var(--mono); color:var(--faint);
-    border:1px solid var(--line); border-radius:7px; padding:6px 9px; }
+  .ends code{ font-family:var(--mono); font-size:11.5px; color:var(--dim);
+    border:1px solid var(--line); border-radius:6px; padding:5px 9px; white-space:nowrap; }
   .ends code b{ color:var(--accent); font-weight:600; }
-  .by{ font:500 12px/1 var(--mono); letter-spacing:.04em; color:var(--faint); }
-  .by b{ color:var(--muted); font-weight:600; }
+  .by{ color:var(--dim); font-size:12px; letter-spacing:.02em; }
+  .by b{ color:var(--fg); font-weight:600; }
 
-  /* entrance choreography — staggered, ease-out */
-  .rise{ opacity:0; transform:translateY(16px); animation:rise .7s var(--ease) forwards; }
-  .d1{animation-delay:.05s}.d2{animation-delay:.14s}.d3{animation-delay:.23s}
-  .d4{animation-delay:.34s}.d5{animation-delay:.46s}.d6{animation-delay:.58s}
+  /* entrance: panel + bar fade up */
+  .rise{ opacity:0; transform:translateY(14px); animation:rise .6s var(--ease) forwards; }
+  .d1{animation-delay:.04s}.d2{animation-delay:.12s}.d3{animation-delay:.22s}
   @keyframes rise{ to{opacity:1;transform:none} }
 
   @media (prefers-reduced-motion:reduce){
     .rise{animation:none;opacity:1;transform:none}
-    .live{animation:none}
-    .node.on .pip{box-shadow:0 0 0 5px rgba(79,227,214,.14)}
-    * { transition:none !important; }
-  }
-  @media (max-width:560px){
-    .node small{display:none} .node{min-width:64px}
-    .status .lbl{display:none}
+    .caret,.online .dot,.runcaret.show{animation:none}
+    .log .ln{opacity:1;transform:none}
+    *{transition:none !important}
   }
 </style>
 </head>
 <body>
-  <div class="shell">
+  <div class="wrap">
     <header class="bar rise d1">
-      <div class="brand"><span class="glyph"></span><b>BandWidth</b></div>
-      <span class="status"><span class="live"></span><span class="lbl">Operational</span></span>
+      <span class="brand"><span class="pmt">$</span>bandwidth<span class="caret"></span></span>
+      <span class="online"><span class="dot"></span>online</span>
     </header>
 
-    <main class="hero">
-      <p class="eyebrow rise d1">Multi-Agent Software Development</p>
-      <h1 class="rise d2">The Autonomous<br>Code-Review <span class="w">Crew</span>.</h1>
-      <p class="tag rise d3">Five specialized AI agents. One coordination layer — Band.</p>
-      <p class="lead rise d3">They <em>plan, review, fix, test, and document</em> every GitHub
-        pull request — handing work to one another through Band, and escalating to a human
-        the moment they're genuinely stuck. This service is the webhook listener; the product
-        lives in the pull-request thread itself.</p>
+    <main class="term rise d2">
+      <div class="term-head">
+        <span class="dots"><i></i><i></i><i></i></span>
+        <span class="path">~/bandwidth</span>
+        <span class="tab">webhook listener</span>
+      </div>
+      <div class="term-body">
 
-      <section class="flow rise d4" aria-label="The agent handoff pipeline">
-        <p class="cap">Handoff pipeline</p>
-        <div class="rail">
-          <div class="node endpt" data-step="0"><span class="pip"></span><span>GitHub</span><small>PR</small></div>
-          <div class="seg"></div>
-          <div class="node" data-step="1"><span class="pip"></span><span>Architect</span><small>Plan</small></div>
-          <div class="seg"></div>
-          <div class="node" data-step="2"><span class="pip"></span><span>Reviewer</span><small>Verdict</small></div>
-          <div class="seg"></div>
-          <div class="node" data-step="3"><span class="pip"></span><span>Engineer</span><small>Fix</small></div>
-          <div class="seg"></div>
-          <div class="node" data-step="4"><span class="pip"></span><span>Tester</span><small>pytest</small></div>
-          <div class="seg"></div>
-          <div class="node" data-step="5"><span class="pip"></span><span>Documenter</span><small>Write</small></div>
-          <div class="seg"></div>
-          <div class="node endpt" data-step="6"><span class="pip"></span><span>GitHub</span><small>Merge</small></div>
+        <div class="blk">
+          <div class="line cmt"># The Autonomous Code-Review Crew</div>
+          <div class="line cmd"><span class="p">$</span>whoami</div>
+          <p class="out">Five specialized AI agents that collaborate <b style="color:var(--bright)">through Band</b>
+            to plan, review, fix, test, and document every GitHub pull request — and escalate to a
+            human the moment they're genuinely stuck. This service is the webhook listener; the
+            product lives in the pull-request thread itself.</p>
         </div>
-      </section>
 
-      <div class="row rise d5">
-        <a class="cta" href="%REPO%">See the agents in action&nbsp;<span class="arr">&rarr;</span></a>
-        <a class="ghost" href="%REPO%">Read the architecture &amp; docs</a>
+        <div class="blk">
+          <div class="line cmd"><span class="p">$</span>bandwidth crew --list</div>
+          <div class="crew">
+            <div class="r"><span class="nm">architect</span><span class="rl">plans &amp; coordinates the room</span></div>
+            <div class="r"><span class="nm">reviewer</span><span class="rl">judges the diff, routes the verdict</span></div>
+            <div class="r"><span class="nm">engineer</span><span class="rl">pushes a real fix commit</span></div>
+            <div class="r"><span class="nm">tester</span><span class="rl">runs real pytest in a sandbox</span></div>
+            <div class="r"><span class="nm">documenter</span><span class="rl">writes the final PR summary</span></div>
+          </div>
+        </div>
+
+        <div class="blk">
+          <div class="line cmd"><span class="p">$</span>bandwidth run --pr 42</div>
+          <div class="log" id="log">
+            <div class="ln"><span class="tag">[architect]</span><span class="msg">room created · diff + source posted</span></div>
+            <div class="ln"><span class="tag">[reviewer]</span><span class="msg">verdict: <b>blocker</b> &rarr; engineer</span></div>
+            <div class="ln"><span class="tag">[engineer]</span><span class="msg">pushed fix <b>a1b2c3d</b> · re-running</span></div>
+            <div class="ln"><span class="tag">[reviewer]</span><span class="msg">verdict: <b>pass</b> &rarr; tester</span></div>
+            <div class="ln"><span class="tag">[tester]</span><span class="msg">pytest · <span class="ok">6 passed</span></span></div>
+            <div class="ln"><span class="tag">[documenter]</span><span class="msg">PR description updated &check;</span></div>
+          </div>
+          <div class="line"><span style="color:var(--accent)">$</span> <span class="runcaret" id="caret"></span></div>
+        </div>
+
       </div>
     </main>
+
+    <div class="row rise d3">
+      <a class="cta" href="%REPO%">view source <span class="arr">&rarr;</span></a>
+      <a class="ghost" href="%REPO%">read the architecture &amp; docs</a>
+    </div>
   </div>
 
-  <footer class="foot rise d6">
+  <footer class="foot">
     <div class="ends">
-      <code><b>GET</b>&nbsp;/</code>
-      <code><b>GET</b>&nbsp;/health</code>
-      <code><b>POST</b>&nbsp;/webhook</code>
+      <code><b>GET</b> /</code>
+      <code><b>GET</b> /health</code>
+      <code><b>POST</b> /webhook</code>
     </div>
-    <span class="by">built by <b>Dev&nbsp;Duo</b> · cross-model · coordinated through Band</span>
+    <span class="by">built by <b>Dev Duo</b> · cross-model · coordinated through Band</span>
   </footer>
 
   <script>
-    // Signature motion: a handoff "packet" walks the pipeline, lighting each
-    // node in turn — the product's behaviour, shown. Pure JS, no deps.
+    // Stream the run log once on load (a live agent run), then leave a blinking
+    // caret. Lines reserve their space up-front (opacity/transform only) so there
+    // is no layout shift or clipping.
     (function(){
       var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-      var nodes = Array.prototype.slice.call(document.querySelectorAll('.node'));
-      if(!nodes.length) return;
-      if(reduce){ nodes.forEach(function(n){ n.classList.add('on'); }); return; }
-      var i = 0;
-      function step(){
-        nodes.forEach(function(n,idx){ n.classList.toggle('on', idx <= i); });
-        i++;
-        if(i > nodes.length){ // brief hold on full path, then reset and replay
-          setTimeout(function(){ nodes.forEach(function(n){ n.classList.remove('on'); }); i = 0; }, 900);
-        }
-      }
-      setTimeout(function(){ step(); setInterval(step, 620); }, 800);
+      var lines = Array.prototype.slice.call(document.querySelectorAll('#log .ln'));
+      var caret = document.getElementById('caret');
+      if(reduce){ lines.forEach(function(l){ l.classList.add('show'); }); if(caret) caret.classList.add('show'); return; }
+      lines.forEach(function(l,i){ setTimeout(function(){ l.classList.add('show'); }, 700 + i*260); });
+      setTimeout(function(){ if(caret) caret.classList.add('show'); }, 700 + lines.length*260 + 150);
     })();
   </script>
 </body>
