@@ -85,15 +85,17 @@ class DocumenterAdapter(SimpleAdapter[Any]):
     SUPPORTED_CAPABILITIES = frozenset()
 
     def __init__(self) -> None:
-        super().__init__(history_converter=None)
+        super().__init__()
         self._documented_rooms: set[str] = set()
+        self._polling_rooms: set[str] = set()
         self._client, self._model = llm.build(config.provider_for("documenter"))
 
     def _self_id(self) -> str | None:
-        return getattr(self, "_band_agent_id", None)
+        """Helper to get our own agent_id safely."""
+        return config.documenter().agent_id
 
     def _architect_mention(self, tools: AgentToolsProtocol) -> list[str]:
-        """Report back to the silent Architect (single inactive recipient)."""
+        """Return the Architect's mention handle, or fallback to all others."""
         try:
             architect_id = config.architect().agent_id
         except Exception:
@@ -126,59 +128,58 @@ class DocumenterAdapter(SimpleAdapter[Any]):
         if msg.message_type in _EVENT_TYPES:
             return
 
-        content = msg.content or ""
+        if room_id not in self._polling_rooms:
+            self._polling_rooms.add(room_id)
+            import asyncio
+            asyncio.create_task(self._poll_for_completion(room_id, tools))
 
-        is_pass = any(marker in content for marker in _PASS_MARKERS)
-        is_escalation = _ESCALATION_MARKER in content
-
-        if not (is_pass or is_escalation):
-            return
-
-        self._documented_rooms.add(room_id)
-        outcome = "escalated" if is_escalation else "passed"
-        log.info("[Documenter] Pipeline %s in room %s — generating docs", outcome, room_id)
-        await emit_task(tools, "Documenter", f"documenting:{outcome}")
-
-        # Read the full room transcript through the Architect's credentials.
-        transcript = ""
-        try:
-            ctx = await fetch_room_context_as_architect(room_id)
-            messages = list(reversed(ctx.get("data", [])))  # oldest-first
-            parts = []
-            for m in messages:
-                if m.get("message_type") in _EVENT_TYPES:
-                    continue
-                sender = m.get("sender_name") or m.get("sender_id", "Agent")
-                body = (m.get("content") or "").strip()
-                if body:
-                    parts.append(f"**{sender}:**\n{body}")
-            transcript = "\n\n---\n\n".join(parts)
-        except Exception:
-            log.warning("[Documenter] could not fetch room context; using empty transcript")
-
-        system_prompt = _ESCALATION_SYSTEM if is_escalation else _SUMMARY_SYSTEM
-        doc = llm.complete_text(
-            self._client,
-            self._model,
-            system_prompt,
-            transcript or "(no transcript available)",
-            max_tokens=800,
-        )
-
-        if not doc or not doc.strip():
-            doc = (
-                "Escalation handover: the automated review pipeline reached its "
-                "attempt limit. A human engineer should inspect the PR."
-                if is_escalation
-                else "The automated review pipeline completed successfully."
-            )
-
-        message = f"{DOCUMENTER_DONE_MARKER}\n\n{doc.strip()}"
-        mentions = self._architect_mention(tools)
-        if mentions:
-            await tools.send_message(message, mentions=mentions)
-        else:
-            await tools.send_message(message)
-
-        await emit_task(tools, "Documenter", "documented", outcome=outcome, model=self._model)
-        log.info("[Documenter] Final documentation posted to room %s", room_id)
+    async def _poll_for_completion(self, room_id: str, tools: AgentToolsProtocol) -> None:
+        import asyncio
+        while room_id not in self._documented_rooms:
+            await asyncio.sleep(5)
+            try:
+                ctx = await fetch_room_context_as_architect(room_id)
+                messages = ctx.get("data", [])
+                for m in messages:
+                    content = m.get("content") or ""
+                    is_pass = any(marker in content for marker in _PASS_MARKERS)
+                    is_escalation = _ESCALATION_MARKER in content
+                    if is_pass or is_escalation:
+                        self._documented_rooms.add(room_id)
+                        outcome = "escalated" if is_escalation else "passed"
+                        log.info("[Documenter] Pipeline %s in room %s — generating docs", outcome, room_id)
+                        await emit_task(tools, "Documenter", f"documenting:{outcome}")
+                        
+                        # Use the history we just fetched
+                        transcript = ""
+                        parts = []
+                        for hm in reversed(messages):
+                            if hm.get("message_type") in _EVENT_TYPES: continue
+                            sender = hm.get("sender_name") or hm.get("sender_id", "Agent")
+                            body = (hm.get("content") or "").strip()
+                            if body: parts.append(f"**{sender}:**\n{body}")
+                        transcript = "\n\n---\n\n".join(parts)
+                        
+                        system_prompt = _ESCALATION_SYSTEM if is_escalation else _SUMMARY_SYSTEM
+                        doc = llm.complete_text(
+                            self._client,
+                            self._model,
+                            system_prompt,
+                            transcript or "(no transcript)",
+                            max_tokens=800,
+                        )
+                        if not doc or not doc.strip():
+                            doc = "Pipeline finished."
+                            
+                        message = f"{DOCUMENTER_DONE_MARKER}\n\n{doc.strip()}"
+                        mentions = self._architect_mention(tools)
+                        if mentions:
+                            await tools.send_message(message, mentions=mentions)
+                        else:
+                            await tools.send_message(message)
+                        
+                        await emit_task(tools, "Documenter", "documented", outcome=outcome, model=self._model)
+                        log.info("[Documenter] Final documentation posted to room %s", room_id)
+                        return
+            except Exception as e:
+                log.warning("[Documenter] polling error: %s", e)
