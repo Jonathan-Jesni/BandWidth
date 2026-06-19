@@ -25,6 +25,7 @@ import config
 from agents import llm
 from agents.events import emit_task
 from agents.room_payload import build_files, build_meta, strip_payload
+from agents.markers import DOCUMENTER_DONE_MARKER as _DOCUMENTER_DONE_MARKER
 from band import AgentTools
 from band.platform import BandLink
 
@@ -55,6 +56,8 @@ _TESTER_DONE_MARKERS = (
     "## Escalated for Human Review",
     "Blocker detected",
 )
+# The Documenter synthesizes everything — its marker is the TRUE terminal signal.
+_PIPELINE_DONE_MARKER = (_DOCUMENTER_DONE_MARKER,)
 _ROOM_MARKER_RE = re.compile(r"<!--\s*bandwidth-room:([^\s>]+)\s*-->")
 
 # Source files large enough to embed must still look like text we can run/patch.
@@ -388,6 +391,24 @@ async def handle_pr_event(payload: dict) -> None:
         plan = _plan(diff_summary, sources)
         plan_block = f"{plan}\n\n" if plan else ""
 
+        # Immediately seed the PR description with the AI plan so it's visible
+        # to reviewers from the very first second. The Documenter will overwrite
+        # this at the end with the full, rich summary.
+        if plan:
+            try:
+                initial_desc = (
+                    f"{pr_body}\n\n{plan}" if pr_body else plan
+                )
+                _github_request(
+                    "PATCH",
+                    f"{_GITHUB_API}/repos/{repo}/pulls/{pr_number}",
+                    token,
+                    json={"body": initial_desc},
+                )
+                log.info("PR #%d: seeded GitHub PR description with plan", pr_number)
+            except Exception:
+                log.warning("PR #%d: could not seed PR description — skipping", pr_number)
+
         # Build the opening message (human-readable + hidden machine payload).
         body_snippet = (
             pr_body[:400] + ("…" if len(pr_body) > 400 else "")
@@ -409,13 +430,14 @@ async def handle_pr_event(payload: dict) -> None:
         reviewer = config.reviewer()
         tester = config.tester()
         engineer = config.engineer()
+        documenter = config.documenter()
 
         roomless, _ = _architect_tools("")
         room_id = await roomless.create_chatroom()
         log.info("PR #%d: Created room %s", pr_number, room_id)
 
         tools = AgentTools(room_id, roomless.rest, [])
-        for creds in (reviewer, tester, engineer):
+        for creds in (reviewer, tester, engineer, documenter):
             result = await tools.add_participant(creds.agent_id)
             log.info("PR #%d: Added %s: %s", pr_number, creds.name, result.get("status"))
 
@@ -437,18 +459,38 @@ async def handle_pr_event(payload: dict) -> None:
         await emit_task(tools, "Architect", "seeded:awaiting-review")
         log.info("PR #%d: Opening message posted to room %s", pr_number, room_id)
 
-        # Wait for a terminal message, then post the full transcript to GitHub.
-        log.info("PR #%d: Waiting for the pipeline to finish...", pr_number)
-        finished = await _wait_for_marker(tools, room_id, _TESTER_DONE_MARKERS)
+        # Wait for the Documenter's final synthesis (which itself fires after the
+        # Tester/Escalation marker), then post everything to GitHub.
+        log.info("PR #%d: Waiting for the Documenter to finish...", pr_number)
+        finished = await _wait_for_marker(tools, room_id, _PIPELINE_DONE_MARKER)
         if not finished:
-            log.warning("PR #%d: pipeline timed out — posting partial transcript", pr_number)
+            # Graceful degradation: Documenter timed out, post partial transcript.
+            log.warning("PR #%d: Documenter timed out — posting partial transcript", pr_number)
 
         ctx = await tools.fetch_room_context(room_id=room_id, page_size=100)
-        messages = list(reversed(ctx.get("data", [])))  # context is newest-first
+        messages = list(reversed(ctx.get("data", [])))
         comment_body = _format_transcript(messages)
         comment_body += f"\n\n<!-- bandwidth-room:{room_id} -->"
         _upsert_github_comment(repo, pr_number, token, comment_body)
         log.info("PR #%d: GitHub review comment upserted", pr_number)
+
+        # PATCH the PR description with the Documenter's output so the PR page
+        # itself shows the final human-readable summary or escalation handover.
+        doc_text = ""
+        for m in messages:
+            if _DOCUMENTER_DONE_MARKER in (m.get("content") or ""):
+                doc_text = (m.get("content") or "").strip()
+                break
+        if doc_text:
+            try:
+                pr_url = f"{_GITHUB_API}/repos/{repo}/pulls/{pr_number}"
+                _github_request(
+                    "PATCH", pr_url, token,
+                    json={"body": doc_text},
+                )
+                log.info("PR #%d: GitHub PR description updated by Documenter", pr_number)
+            except Exception:
+                log.warning("PR #%d: could not update PR description — skipping", pr_number)
 
     except Exception:
         log.exception("architect_handler: failed to handle PR event")

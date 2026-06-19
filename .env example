@@ -12,6 +12,9 @@ TESTER_API_KEY="your-tester-key"
 ENGINEER_AGENT_ID="your-engineer-uuid"
 ENGINEER_API_KEY="your-engineer-key"
 
+DOCUMENTER_AGENT_ID="your-documenter-uuid"
+DOCUMENTER_API_KEY="your-documenter-key"
+
 # LLM Providers — BandWidth is cross-model: agents reason on different providers,
 # coordinated through Band. Featherless serves open-source inference (DeepSeek);
 # AI/ML API serves a hosted frontier model. Both are OpenAI-compatible.
@@ -26,6 +29,10 @@ FEATHERLESS_MODEL="deepseek-ai/DeepSeek-V4-Pro"
 # reject (→ escalation). For the FINAL DEMO RECORDING use gpt-4o so fixes converge
 # cleanly to a PASS + green tests.
 AIML_MODEL="gpt-4o-mini"        # ← set to "gpt-4o" for the demo recording
+# The Documenter runs once at the end of the pipeline (not in a hot loop), so
+# give it a smarter model for better PR descriptions. Overrides AIML_MODEL for
+# this role only.
+DOCUMENTER_MODEL="gpt-4o"
 
 # Per-role provider overrides (optional): featherless | aimlapi.
 # Default topology — Reviewer/Tester on Featherless, Engineer/Architect on AI/ML API.
@@ -34,6 +41,7 @@ REVIEWER_PROVIDER="featherless"
 TESTER_PROVIDER="featherless"
 ENGINEER_PROVIDER="aimlapi"
 ARCHITECT_PROVIDER="aimlapi"
+DOCUMENTER_PROVIDER="aimlapi"
 
 # Reviewer strictness — flip between demo takes (restart the Reviewer to apply):
 #   reasonable → blocks only real defects → happy path converges to a clean Pass.

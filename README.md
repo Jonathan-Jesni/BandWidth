@@ -7,8 +7,11 @@ When a developer opens or updates a Pull Request on GitHub, a secure webhook pay
 ![Python](https://img.shields.io/badge/Python-3.x-blue?style=flat&logo=python)
 ![Flask](https://img.shields.io/badge/Flask-Server-black?style=flat&logo=flask)
 ![GitHub Webhooks](https://img.shields.io/badge/GitHub-Webhooks-lightgrey?style=flat&logo=github)
+![Band AI](https://img.shields.io/badge/Band_AI-Multi--Agent_Platform-orange?style=flat)
 ![Featherless AI](https://img.shields.io/badge/Featherless_AI-Serverless-purple?style=flat)
 ![DeepSeek V4](https://img.shields.io/badge/DeepSeek--V4--Pro-1.6T-blue?style=flat)
+![AI/ML API](https://img.shields.io/badge/AI/ML_API-Gateway-red?style=flat)
+![GPT-4o](https://img.shields.io/badge/OpenAI-GPT--4o-green?style=flat)
 
 ---
 
@@ -24,14 +27,16 @@ GitHub PR Event
 [ agents/architect_handler.py ]
    │
    ├──► 1. Queries GitHub REST API for targeted PR code diffs
-   ├──► 2. Authenticates via BandLink (Architect Credentials)
+   ├──► 2. Plans the review & PATCHes GitHub PR Description (AI/ML API)
    ├──► 3. Creates an isolated Band Chatroom
-   ├──► 4. Injects Specialized Agents (Reviewer + Tester + Engineer)
+   ├──► 4. Injects Specialized Agents (Reviewer, Tester, Engineer, Documenter)
    └──► 5. Dispatches Initial Markdown Context (+ embedded source) & Mentions
               │
               ├──► [ Reviewer Agent ] ──► Reviews; routes verdict
               │         ├─ Pass    ──► [ Tester Agent ]   ──► Runs real pytest in a sandbox
               │         └─ Blocker ──► [ Engineer Agent ] ──► Pushes a fix commit to the PR branch
+              │
+              ├──► [ Documenter Agent ] ──► Synthesizes final outcome & updates GitHub PR Description
               │
               └──► (Human replies to the PR comment are relayed back into the room;
                     the Reviewer answers and the answer is posted to GitHub.)
@@ -60,6 +65,7 @@ different inference providers, all coordinated through Band:
 |-------|----------|-------|
 | Reviewer, Tester | **Featherless** (open-source inference) | `deepseek-ai/DeepSeek-V4-Pro` |
 | Engineer, Architect-planner | **AI/ML API** (hosted frontier) | `AIML_MODEL` (default `gpt-4o-mini`) |
+| Documenter | **AI/ML API** (hosted frontier) | `DOCUMENTER_MODEL` (default `gpt-4o`) |
 
 Providers are pure config (`config.provider_for(role)`, override with
 `{ROLE}_PROVIDER`), built through `agents/llm.py`. If `AIML_API_KEY` is unset, those
@@ -132,6 +138,7 @@ Spin up the background system processes by opening 6 distinct terminal tabs to i
 * **Tab 4 (Reviewer Daemon):** `python -m agents.reviewer`
 * **Tab 5 (Tester Daemon):** `python -m agents.tester`
 * **Tab 6 (Engineer Daemon):** `python -m agents.engineer`
+* **Tab 7 (Documenter Daemon):** `python -m agents.documenter`
 
 ---
 
