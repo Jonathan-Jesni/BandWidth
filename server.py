@@ -31,6 +31,10 @@ def _verify_signature(body: bytes, sig_header: str) -> bool:
     return hmac.compare_digest(sig_header, expected)
 
 
+@app.route("/", methods=["GET"])
+def index() -> str:
+    return "<h1>BandWidth is Live! 🚀</h1><p>This is the webhook listener server for the BandWidth multi-agent system. The actual user interface is your GitHub Pull Requests! Go open a PR on <a href='https://github.com/Jonathan-Jesni/BandWidth'>our repository</a> to see the agents in action.</p>", 200
+
 @app.route("/webhook", methods=["POST"])
 def webhook() -> tuple[str, int]:
     sig = request.headers.get("X-Hub-Signature-256", "")
