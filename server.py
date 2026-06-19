@@ -125,6 +125,12 @@ _LANDING_HTML = """\
   .cta:hover{ transform:translateY(-2px); box-shadow:0 0 0 1px rgba(74,222,128,.6),0 18px 38px -14px rgba(74,222,128,.85); }
   .cta .arr{ transition:transform .25s var(--ease); }
   .cta:hover .arr{ transform:translateX(4px); }
+  .cta2{ display:inline-flex; align-items:center; gap:9px; text-decoration:none;
+    font-family:var(--mono); font-size:14px; font-weight:600; color:var(--accent);
+    background:transparent; padding:11px 19px; border-radius:9px; letter-spacing:.01em;
+    border:1px solid var(--accent-dim);
+    transition:transform .25s var(--ease), border-color .25s var(--ease), background .25s var(--ease); }
+  .cta2:hover{ transform:translateY(-2px); border-color:var(--accent); background:rgba(74,222,128,.07); }
   .ghost{ color:var(--dim); text-decoration:none; font-size:13.5px;
     border-bottom:1px solid var(--line-2); padding-bottom:2px;
     transition:color .2s var(--ease), border-color .2s var(--ease); }
@@ -209,7 +215,8 @@ _LANDING_HTML = """\
 
     <div class="row rise d3">
       <a class="cta" href="%REPO%">view source <span class="arr">&rarr;</span></a>
-      <a class="ghost" href="%REPO%">read the architecture &amp; docs</a>
+      <a class="cta2" href="%REPO%/pulls">view pull requests</a>
+      <a class="ghost" href="%REPO%/blob/main/README.md">read the documentation</a>
     </div>
   </div>
 
