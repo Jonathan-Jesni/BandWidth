@@ -15,6 +15,7 @@ human's GitHub comment, it answers with "## Answer" (mentioning the Architect).
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any
 
 import config
@@ -30,8 +31,11 @@ log = logging.getLogger(__name__)
 _EVENT_TYPES = {"tool_call", "tool_result", "thought", "error", "task"}
 _MAX_CYCLES = 3  # review cycles per (repo, pr) before forcing Pass to end the loop
 
-# Force the LLM to output strict JSON for the review.
-_SYSTEM_PROMPT = """\
+# The review system prompt is assembled per-process from a base + a severity block
+# chosen by REVIEWER_MODE (reasonable | strict). Flip it in .env between demo takes:
+#   reasonable → real defects only → happy path converges to a clean Pass.
+#   strict     → flags any unhandled edge case → forces the escalation arc.
+_PROMPT_HEADER = """\
 You are a senior code reviewer. Given a PR title, description, and diff, output ONLY valid JSON matching exactly this schema:
 {
   "issues": "A bullet list of specific issues found. Mark each [BLOCKER] or [MINOR]. If no issues, write '- No issues found.'",
@@ -39,7 +43,9 @@ You are a senior code reviewer. Given a PR title, description, and diff, output 
 }
 
 Rules: list AT MOST 5 issues, ONE LINE each, max 25 words per line. Do NOT repeat
-yourself or restate the same issue. Do not repeat the diff back.
+yourself or restate the same issue. Do not repeat the diff back."""
+
+_REASONABLE_RULES = """
 
 Severity:
 - Mark [BLOCKER] ONLY when the code produces incorrect results or crashes for the
@@ -47,6 +53,19 @@ Severity:
 - Missing type hints, missing input-type validation, and hypothetical misuse
   (e.g. passing the wrong type) are [MINOR], NOT [BLOCKER].
 - If there are NO [BLOCKER] issues, the verdict MUST be "Pass"."""
+
+_STRICT_RULES = """
+
+Severity: be rigorous. Flag ANY unhandled edge case (empty input, None, non-numeric
+values), missing input validation, or correctness gap as [BLOCKER]. Only return the
+"Pass" verdict when the code is fully robust against these cases."""
+
+
+def _build_system_prompt() -> str:
+    mode = os.getenv("REVIEWER_MODE", "reasonable").strip().lower()
+    rules = _STRICT_RULES if mode == "strict" else _REASONABLE_RULES
+    log.info("[Reviewer] mode=%s", "strict" if mode == "strict" else "reasonable")
+    return _PROMPT_HEADER + rules
 
 _ANSWER_SYSTEM_PROMPT = """\
 You are the senior code reviewer who reviewed this pull request. A human has
@@ -64,6 +83,7 @@ class ReviewerAdapter(SimpleAdapter[Any]):
         self._reviewed_rooms: set[str] = set()
         self._answered: set[str] = set()
         self._cycles: dict[tuple[str, str], int] = {}
+        self._system_prompt = _build_system_prompt()
         self._client, self._model = llm.build(config.provider_for("reviewer"))
 
     # --- identity / mention helpers ------------------------------------- #
@@ -151,7 +171,7 @@ class ReviewerAdapter(SimpleAdapter[Any]):
         cycle = self._cycles[cycle_key]
 
         parsed = llm.complete_json(
-            self._client, self._model, _SYSTEM_PROMPT, content, max_tokens=1500
+            self._client, self._model, self._system_prompt, content, max_tokens=1500
         )
         review_text = llm.sanitize(parsed.get("issues") or "_Automated review was inconclusive this cycle._")
         flag = parsed.get("verdict", "Pass")

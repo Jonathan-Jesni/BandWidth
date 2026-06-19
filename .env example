@@ -35,6 +35,11 @@ TESTER_PROVIDER="featherless"
 ENGINEER_PROVIDER="aimlapi"
 ARCHITECT_PROVIDER="aimlapi"
 
+# Reviewer strictness — flip between demo takes (restart the Reviewer to apply):
+#   reasonable → blocks only real defects → happy path converges to a clean Pass.
+#   strict     → blocks any unhandled edge case → forces the human-escalation arc.
+REVIEWER_MODE="reasonable"
+
 # GitHub integration
 GITHUB_TOKEN="your-github-pat"
 GITHUB_WEBHOOK_SECRET="your-webhook-secret"
