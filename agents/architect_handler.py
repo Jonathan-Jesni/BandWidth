@@ -535,8 +535,8 @@ async def handle_issue_comment(payload: dict) -> None:
         sentinels = ("<!-- bandwidth-room", "## BandWidth", "BandWidth Reviewer", "## Question")
         if any(s in body for s in sentinels):
             return
-        if author and author == _bot_login_name(token):
-            return
+        # if author and author == _bot_login_name(token):
+        #     return
         if not body:
             return
 
