@@ -79,6 +79,10 @@ def engineer() -> AgentCreds:
     return load_creds("ENGINEER", "Engineer")
 
 
+def documenter() -> AgentCreds:
+    return load_creds("DOCUMENTER", "Documenter")
+
+
 def github_token() -> str:
     return require("GITHUB_TOKEN")
 
@@ -159,20 +163,31 @@ _DEFAULT_PROVIDER = {
     "tester": "featherless",
     "engineer": "aimlapi",
     "architect": "aimlapi",
+    "documenter": "aimlapi",
 }
 
 
 def provider_for(role: str) -> Provider:
     """Return the inference Provider for a role.
 
-    Honors a `{ROLE}_PROVIDER` env override, then the default topology. Falls back
+    Honors a ``{ROLE}_PROVIDER`` env override, then the default topology. Falls back
     to Featherless (with a warning) if the chosen provider's key isn't configured,
     so the system still runs with a single provider key.
+
+    A ``{ROLE}_MODEL`` override (e.g. ``DOCUMENTER_MODEL=gpt-4o``) lets individual
+    roles use a different model than the shared ``AIML_MODEL`` default, without
+    changing the provider. Useful for giving the Documenter a smarter model while
+    keeping the Engineer on a cheaper one.
     """
     choice = os.getenv(f"{role.upper()}_PROVIDER", _DEFAULT_PROVIDER.get(role, "featherless"))
     choice = choice.strip().lower()
     if choice == "aimlapi" and _usable(os.getenv("AIML_API_KEY")):
-        return aiml_provider()
+        base = aiml_provider()
+        role_model = os.getenv(f"{role.upper()}_MODEL", "").strip()
+        if role_model:
+            log.info("provider_for(%s): using model override %r", role, role_model)
+            return Provider(base.name, base.api_key, base.base_url, role_model)
+        return base
     if choice == "aimlapi":
         log.warning("provider_for(%s): AIML_API_KEY not configured — using Featherless", role)
     return featherless_provider()
