@@ -35,6 +35,14 @@ _EVENT_TYPES = {"tool_call", "tool_result", "thought", "error", "task"}
 
 _PASS_MARKERS = ("## Test Results", "## Tests & Docs")
 _ESCALATION_MARKER = "## Escalated for Human Review"
+# The Engineer only posts this when it actually rewrote files and pushed a commit.
+# If absent, no fix was applied — the Documenter must NOT claim one was.
+_FIX_MARKER = "## Auto-Fix"
+
+# Wall-clock cap on the per-room poll loop. Slightly above the Architect's 300s
+# wait so the Documenter still wins the race in normal runs, but bounded so a
+# stuck room can't accumulate orphaned poll tasks.
+_POLL_TIMEOUT_SECONDS = 360
 
 # ---- LLM prompts -----------------------------------------------------------
 
@@ -57,6 +65,27 @@ How the Engineer resolved it.
 What the Tester verified (or recommended).
 
 Be factual, terse, and professional. Max 300 words total."""
+
+_CLEAN_PASS_SYSTEM = """\
+You are a senior engineering lead writing the final summary for a pull request
+that an AI multi-agent system (BandWidth) reviewed and APPROVED without requiring
+any code changes. The Engineer did NOT push a fix — the code passed review as-is
+(at most with minor, non-blocking notes). Given the full transcript of the review
+room, write a concise, professional PR description in markdown with these sections:
+
+## Summary of Changes
+One paragraph describing what code was changed in the PR and why.
+
+## Review Findings
+The Reviewer's notes. If only minor/non-blocking items were raised, say so and list
+them. If none, state that no issues were found. DO NOT claim any fix was applied —
+none was.
+
+## Test Coverage
+What the Tester verified.
+
+Be factual, terse, and professional. Do NOT invent bugs or fixes that are not in
+the transcript. Max 300 words total."""
 
 _ESCALATION_SYSTEM = """\
 You are a senior engineering lead writing an escalation handover document for a
@@ -135,7 +164,19 @@ class DocumenterAdapter(SimpleAdapter[Any]):
 
     async def _poll_for_completion(self, room_id: str, tools: AgentToolsProtocol) -> None:
         import asyncio
+        import time
+        deadline = time.monotonic() + _POLL_TIMEOUT_SECONDS
         while room_id not in self._documented_rooms:
+            if time.monotonic() > deadline:
+                # Bound the loop so a room that never reaches a terminal marker
+                # can't leave an orphaned poll task running forever. Mark it
+                # handled so a later message doesn't immediately re-spawn this.
+                self._documented_rooms.add(room_id)
+                log.warning(
+                    "[Documenter] poll timed out after %ds in room %s — giving up",
+                    _POLL_TIMEOUT_SECONDS, room_id,
+                )
+                return
             await asyncio.sleep(5)
             try:
                 ctx = await fetch_room_context_as_architect(room_id)
@@ -146,10 +187,21 @@ class DocumenterAdapter(SimpleAdapter[Any]):
                     is_escalation = _ESCALATION_MARKER in content
                     if is_pass or is_escalation:
                         self._documented_rooms.add(room_id)
-                        outcome = "escalated" if is_escalation else "passed"
+                        # Did the Engineer actually push a fix? Only then may we
+                        # narrate a "Fix Applied" section — otherwise the LLM
+                        # invents fixes that were never made (see Finding 1).
+                        fix_applied = any(
+                            _FIX_MARKER in (m.get("content") or "") for m in messages
+                        )
+                        if is_escalation:
+                            outcome = "escalated"
+                        elif fix_applied:
+                            outcome = "passed"
+                        else:
+                            outcome = "clean-pass"
                         log.info("[Documenter] Pipeline %s in room %s — generating docs", outcome, room_id)
                         await emit_task(tools, "Documenter", f"documenting:{outcome}")
-                        
+
                         # Use the history we just fetched
                         transcript = ""
                         parts = []
@@ -159,8 +211,13 @@ class DocumenterAdapter(SimpleAdapter[Any]):
                             body = (hm.get("content") or "").strip()
                             if body: parts.append(f"**{sender}:**\n{body}")
                         transcript = "\n\n---\n\n".join(parts)
-                        
-                        system_prompt = _ESCALATION_SYSTEM if is_escalation else _SUMMARY_SYSTEM
+
+                        if is_escalation:
+                            system_prompt = _ESCALATION_SYSTEM
+                        elif fix_applied:
+                            system_prompt = _SUMMARY_SYSTEM
+                        else:
+                            system_prompt = _CLEAN_PASS_SYSTEM
                         doc = llm.complete_text(
                             self._client,
                             self._model,

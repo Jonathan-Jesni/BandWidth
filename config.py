@@ -114,6 +114,17 @@ def enable_auto_fix() -> bool:
     return _flag("ENABLE_AUTO_FIX")
 
 
+def enable_self_comment_guard() -> bool:
+    """When true, ignore PR comments authored by the bot's own GitHub login.
+
+    Off by default: in the local demo the human asking questions IS the PAT
+    owner, so blocking the PAT owner's comments would break the human-in-the-loop
+    flow. Set ENABLE_SELF_COMMENT_GUARD=1 only when the bot posts under its own,
+    separate GitHub account.
+    """
+    return _flag("ENABLE_SELF_COMMENT_GUARD")
+
+
 # --------------------------------------------------------------------------- #
 # LLM providers — BandWidth is a cross-model system: different agents reason on
 # different providers, coordinated through Band. Featherless serves open-source

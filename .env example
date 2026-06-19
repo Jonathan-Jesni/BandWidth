@@ -56,3 +56,4 @@ GITHUB_WEBHOOK_SECRET="your-webhook-secret"
 # enable deliberately. Truthy = 1/true/yes/on.
 ENABLE_TEST_EXECUTION="0"   # Tester runs real pytest in a sandboxed subprocess
 ENABLE_AUTO_FIX="0"         # Engineer pushes fix commits to the PR branch
+ENABLE_SELF_COMMENT_GUARD="0"  # ignore PR comments from the bot's own login (set 1 only when the bot has its own GitHub account; leave 0 for PAT-owner demos)
