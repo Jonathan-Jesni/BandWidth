@@ -441,23 +441,29 @@ async def handle_pr_event(payload: dict) -> None:
             result = await tools.add_participant(creds.agent_id)
             log.info("PR #%d: Added %s: %s", pr_number, creds.name, result.get("status"))
 
-        # Mention ONLY the Reviewer — it's the only agent that acts on the
-        # opening. Mentioning multiple active agents risks the 422 resync race.
-        await tools.get_participants()
-        mentions = [
+        reviewer_mentions = [
             p.get("handle") or p.get("name")
             for p in tools.participants
             if p.get("id") == reviewer.agent_id and (p.get("handle") or p.get("name"))
         ]
-        log.info("PR #%d: Mentioning %s", pr_number, mentions)
+        doc_mentions = [
+            p.get("handle") or p.get("name")
+            for p in tools.participants
+            if p.get("id") == documenter.agent_id and (p.get("handle") or p.get("name"))
+        ]
+        log.info("PR #%d: Mentioning Reviewer %s and Documenter %s", pr_number, reviewer_mentions, doc_mentions)
 
         # Give agents time to join and complete their initial sync.
         await asyncio.sleep(3)
 
         await emit_task(tools, "Architect", "planned", files=len(sources))
-        await tools.send_message(opening, mentions=mentions)
+        await tools.send_message(opening, mentions=reviewer_mentions)
+        if doc_mentions:
+            await asyncio.sleep(1)
+            await tools.send_message(f"@{doc_mentions[0]} Please monitor the room.", mentions=doc_mentions)
+        
         await emit_task(tools, "Architect", "seeded:awaiting-review")
-        log.info("PR #%d: Opening message posted to room %s", pr_number, room_id)
+        log.info("PR #%d: Opening messages posted to room %s", pr_number, room_id)
 
         # Wait for the Documenter's final synthesis (which itself fires after the
         # Tester/Escalation marker), then post everything to GitHub.
