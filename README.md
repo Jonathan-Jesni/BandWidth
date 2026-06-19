@@ -1,8 +1,21 @@
-# BandWidth
+# BandWidth — The Autonomous Code-Review Crew
 
-BandWidth is an autonomous, multi-agent continuous integration and review pipeline built on the [Band platform](https://app.band.ai). 
+> **Track 2 — Multi-Agent Software Development** · built by **Dev Duo** on the [Band platform](https://app.band.ai)
 
-When a developer opens or updates a Pull Request on GitHub, a secure webhook payload provisions an isolated collaboration workspace. Inside this space, a swarm of specialized AI agents analyzes code diffs, tracks blockers via typed system events, and prepares documentation or unit tests asynchronously.
+**The problem.** Code review is the most expensive recurring coordination tax in software. Every pull request stalls waiting on a human reviewer, context is scattered across diffs, CI logs, and chat, and the loop from "found a bug" to "fixed and verified" is measured in days. Teams don't lack tools — they lack *coordination*.
+
+**BandWidth** is a crew of **five specialized AI agents** that collaborate **through Band** to plan, review, fix, test, and document every GitHub pull request — and escalate to a human the moment they're genuinely stuck. When a developer opens or updates a PR, a secure webhook spins up an isolated Band room and the crew goes to work: the Reviewer hands a Blocker to the Engineer, the Engineer pushes a real fix commit, the Tester runs actual pytest, and the Documenter writes the final PR description — turning hours of human glue into minutes of autonomous, auditable collaboration.
+
+### Band is the collaboration layer — not a notifier
+
+The agents don't just *report* to Band; they *work* in it. Coordination happens through Band as a first-class part of the workflow:
+
+- **Discovery** — agents are added to a per-PR room and address each other by identity.
+- **Task handoffs by `agent_id`** — each verdict is routed to exactly one teammate (Pass → Tester, Blocker → Engineer). A direct delegation, never a broadcast.
+- **Shared context** — the full diff + changed-file source live in the room; teammates read it through the Architect.
+- **Typed task-state events** — every stage emits a `task` event, so coordination is visible as a Band primitive, not just chat.
+- **Strict-mode escalation** — a stuck Reviewer↔Engineer debate hits a cap and hands off to a human with a written handover.
+- **Bi-directional human sync** — a reply on the GitHub PR flows into the room and the answer flows back out.
 
 ![Python](https://img.shields.io/badge/Python-3.x-blue?style=flat&logo=python)
 ![Flask](https://img.shields.io/badge/Flask-Server-black?style=flat&logo=flask)
@@ -187,7 +200,18 @@ docker compose logs -f   # follow all six processes
 
 Only `server` publishes a port (`5000`); the agents dial **out** to Band over
 WebSockets and need no inbound ports. `restart: unless-stopped` keeps the
-long-lived daemons alive across transient drops.
+long-lived daemons alive across transient drops, and a `/health` **healthcheck** plus
+a small **`autoheal`** sidecar automatically restart the webhook server if it ever
+goes unhealthy (a wedged-but-still-running process won't recover from
+`restart: unless-stopped` alone).
+
+### HTTP endpoints
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `GET`  | `/` | Branded status landing page (the link to share with judges/users). |
+| `GET`  | `/health` | JSON health check (`{"status":"ok"}`) — used by the Docker healthcheck. |
+| `POST` | `/webhook` | GitHub webhook ingress, verified via `X-Hub-Signature-256`. |
 
 ---
 
