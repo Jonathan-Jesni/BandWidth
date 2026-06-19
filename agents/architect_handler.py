@@ -228,10 +228,48 @@ def _plan(diff_summary: str, sources: dict[str, str]) -> str:
 
 
 def _post_github_comment(repo: str, pr_number: int, token: str, body: str) -> None:
+    """POST a new PR comment (used for human-question replies)."""
     if len(body) > _COMMENT_CAP:
         body = body[:_COMMENT_CAP] + "\n\n…(comment truncated)"
     url = f"{_GITHUB_API}/repos/{repo}/issues/{pr_number}/comments"
     _github_request("POST", url, token, json={"body": body})
+
+
+# Stable marker identifying the single per-PR BandWidth review comment (distinct
+# from the per-cycle room marker). Lets each new cycle UPDATE one comment instead
+# of spamming a new one each time.
+_PR_MARKER = "<!-- bandwidth-pr -->"
+
+
+def _find_bot_comment_id(repo: str, pr_number: int, token: str) -> int | None:
+    """Return the id of the existing BandWidth review comment, if any."""
+    url = f"{_GITHUB_API}/repos/{repo}/issues/{pr_number}/comments"
+    resp = _github_request("GET", url, token, params={"per_page": 100})
+    for comment in resp.json():
+        if _PR_MARKER in (comment.get("body") or ""):
+            return comment.get("id")
+    return None
+
+
+def _upsert_github_comment(repo: str, pr_number: int, token: str, body: str) -> None:
+    """Update the single BandWidth review comment for this PR, or create it.
+
+    Keeps the whole multi-cycle review as ONE clean comment. The body already
+    carries the per-cycle `<!-- bandwidth-room:ID -->` marker; we append the stable
+    `_PR_MARKER` so the next cycle can find and PATCH this same comment.
+    """
+    if len(body) > _COMMENT_CAP:
+        body = body[:_COMMENT_CAP] + "\n\n…(comment truncated)"
+    body = f"{body}\n\n{_PR_MARKER}"
+    cid = _find_bot_comment_id(repo, pr_number, token)
+    if cid is not None:
+        url = f"{_GITHUB_API}/repos/{repo}/issues/comments/{cid}"
+        _github_request("PATCH", url, token, json={"body": body})
+        log.info("PR #%d: updated existing review comment %s", pr_number, cid)
+    else:
+        url = f"{_GITHUB_API}/repos/{repo}/issues/{pr_number}/comments"
+        _github_request("POST", url, token, json={"body": body})
+        log.info("PR #%d: created review comment", pr_number)
 
 
 _bot_login: str | None = None
@@ -409,8 +447,8 @@ async def handle_pr_event(payload: dict) -> None:
         messages = list(reversed(ctx.get("data", [])))  # context is newest-first
         comment_body = _format_transcript(messages)
         comment_body += f"\n\n<!-- bandwidth-room:{room_id} -->"
-        _post_github_comment(repo, pr_number, token, comment_body)
-        log.info("PR #%d: GitHub comment posted", pr_number)
+        _upsert_github_comment(repo, pr_number, token, comment_body)
+        log.info("PR #%d: GitHub review comment upserted", pr_number)
 
     except Exception:
         log.exception("architect_handler: failed to handle PR event")

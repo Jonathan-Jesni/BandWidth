@@ -39,8 +39,14 @@ You are a senior code reviewer. Given a PR title, description, and diff, output 
 }
 
 Rules: list AT MOST 5 issues, ONE LINE each, max 25 words per line. Do NOT repeat
-yourself or restate the same issue. Do not repeat the diff back. Only use the
-"Blocker" verdict for genuine correctness/security bugs, never for style nits."""
+yourself or restate the same issue. Do not repeat the diff back.
+
+Severity:
+- Mark [BLOCKER] ONLY when the code produces incorrect results or crashes for the
+  inputs the function is clearly meant to handle, or has a security flaw.
+- Missing type hints, missing input-type validation, and hypothetical misuse
+  (e.g. passing the wrong type) are [MINOR], NOT [BLOCKER].
+- If there are NO [BLOCKER] issues, the verdict MUST be "Pass"."""
 
 _ANSWER_SYSTEM_PROMPT = """\
 You are the senior code reviewer who reviewed this pull request. A human has
