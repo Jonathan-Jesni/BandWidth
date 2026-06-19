@@ -71,4 +71,10 @@ def webhook() -> tuple[str, int]:
 
 
 if __name__ == "__main__":
-    app.run(port=5000, debug=False)
+    import os
+
+    # Host/port are env-configurable so the same entrypoint works locally
+    # (default 127.0.0.1) and inside a container (set HOST=0.0.0.0).
+    host = os.getenv("HOST", "127.0.0.1")
+    port = int(os.getenv("PORT", "5000"))
+    app.run(host=host, port=port, debug=False)

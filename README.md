@@ -55,6 +55,17 @@ GitHub PR Event
    the modified files' full source in the room; the Tester writes them plus an
    LLM-generated pytest file into a `tempfile.TemporaryDirectory()` and runs
    `pytest` in a sandboxed subprocess, posting the **real** pass/fail output.
+4. **Documenter agent (the 5th agent).** A passive observer that stays silent during
+   the Reviewer↔Engineer↔Tester debate and wakes only on a *terminal* signal
+   (`## Test Results` / `## Tests & Docs` or `## Escalated for Human Review`). It
+   reads the full room transcript, synthesizes a polished `## Final PR Documentation`
+   block, and the Architect pushes it to the **GitHub PR description**. It narrates
+   only what actually happened — no fix is claimed unless the Engineer truly pushed one.
+5. **Strict-mode escalation.** With `REVIEWER_MODE=strict`, the Reviewer blocks any
+   unhandled edge case, driving a multi-cycle Reviewer→Engineer→Reviewer debate. When
+   the per-PR attempt cap is hit, the pipeline **escalates to a human** with a
+   handover document instead of looping forever — agents that *know when to stop and
+   ask for help*.
 
 ### Cross-model topology
 
@@ -98,7 +109,7 @@ pip install -r requirements.txt
 Create a `.env` file in the project root containing your unique configuration keys:
 
 ```env
-# Band Agent Identities & Platform Authorization
+# Band Agent Identities & Platform Authorization (one per agent — 5 total)
 ARCHITECT_AGENT_ID="your-architect-uuid"
 ARCHITECT_API_KEY="your-architect-key"
 
@@ -111,17 +122,28 @@ TESTER_API_KEY="your-tester-key"
 ENGINEER_AGENT_ID="your-engineer-uuid"
 ENGINEER_API_KEY="your-engineer-key"
 
+DOCUMENTER_AGENT_ID="your-documenter-uuid"
+DOCUMENTER_API_KEY="your-documenter-key"
+
 # GitHub REST Integration & Webhook Ingestion
 GITHUB_TOKEN="your-github-personal-access-token"   # needs repo write scope for auto-fix
 GITHUB_WEBHOOK_SECRET="your-chosen-webhook-security-string"
 
-# LLM Gateway
-FEATHERLESS_API_KEY="fp_your_featherless_premium_key"
+# LLM Gateways (cross-model — see topology table above)
+FEATHERLESS_API_KEY="fp_your_featherless_premium_key"   # Reviewer + Tester (DeepSeek)
+AIML_API_KEY="your-aiml-key"                            # Engineer + Architect + Documenter
+
+# Reviewer strictness — reasonable (happy path) | strict (forces escalation arc)
+REVIEWER_MODE="reasonable"
 
 # Feature flags (default off)
-ENABLE_TEST_EXECUTION="0"   # Tester runs real pytest in a sandboxed subprocess
-ENABLE_AUTO_FIX="0"         # Engineer pushes fix commits to the PR branch
+ENABLE_TEST_EXECUTION="0"      # Tester runs real pytest in a sandboxed subprocess
+ENABLE_AUTO_FIX="0"            # Engineer pushes fix commits to the PR branch
+ENABLE_SELF_COMMENT_GUARD="0"  # ignore the bot's own PR comments (set 1 only when the bot has its own GitHub account)
 ```
+
+> See [`.env example`](.env%20example) for the full list, including optional model
+> and per-role provider overrides.
 
 > The GitHub webhook must also send **Issue comment** events (in addition to
 > **Pull requests**) for the bi-directional human-in-the-loop sync to work.
@@ -130,7 +152,7 @@ ENABLE_AUTO_FIX="0"         # Engineer pushes fix commits to the PR branch
 
 ## 🚀 Launch Sequence
 
-Spin up the background system processes by opening 6 distinct terminal tabs to isolate your daemon architectures. Ensure your virtual environment is activated in **each** tab:
+Spin up the background system processes by opening 7 distinct terminal tabs to isolate your daemon architectures. Ensure your virtual environment is activated in **each** tab:
 
 * **Tab 1 (Public Proxy Bridge):** `ngrok http 5000`
 * **Tab 2 (Ingestion Gateway Server):** `python server.py`
@@ -149,3 +171,75 @@ To verify full pipeline integrity without a public internet connection, trigger 
 ```powershell
 python test_webhook_local.py
 ```
+
+---
+
+## 🐳 Containerized Run (Docker Compose)
+
+The whole stack — the webhook `server` plus the five agent daemons — runs from a
+single image as six services that share your `.env`:
+
+```bash
+cp ".env example" .env   # then fill in your credentials
+docker compose up -d --build
+docker compose logs -f   # follow all six processes
+```
+
+Only `server` publishes a port (`5000`); the agents dial **out** to Band over
+WebSockets and need no inbound ports. `restart: unless-stopped` keeps the
+long-lived daemons alive across transient drops.
+
+---
+
+## ☁️ Deployment (Google Cloud — Compute Engine VM)
+
+> **Why a VM, not Cloud Run?** The five agents are *long-lived daemons holding
+> persistent WebSocket connections to Band*. Request-scaled / scale-to-zero
+> platforms (Cloud Run, Lambda) terminate idle instances and would drop those
+> connections. A small always-on VM running Docker Compose is the right fit.
+
+### 1. Provision the VM + static IP
+
+```bash
+gcloud compute addresses create bandwidth-ip --region=us-central1
+
+gcloud compute instances create bandwidth \
+  --zone=us-central1-a \
+  --machine-type=e2-small \
+  --image-family=debian-12 --image-project=debian-cloud \
+  --address=bandwidth-ip \
+  --tags=http-server,https-server
+
+# Allow the webhook port (skip if you front it with Caddy/nginx on 443).
+gcloud compute firewall-rules create allow-bandwidth-webhook \
+  --allow=tcp:5000 --target-tags=http-server --source-ranges=0.0.0.0/0
+```
+
+### 2. Install Docker + deploy
+
+```bash
+gcloud compute ssh bandwidth --zone=us-central1-a
+
+# On the VM:
+sudo apt-get update && sudo apt-get install -y docker.io docker-compose-plugin git
+sudo usermod -aG docker "$USER" && newgrp docker
+git clone https://github.com/Jonathan-Jesni/BandWidth.git && cd BandWidth
+cp ".env example" .env && nano .env        # fill in credentials
+docker compose up -d --build
+```
+
+### 3. Wire the GitHub webhook
+
+In the repo: **Settings → Webhooks → Add webhook**
+- **Payload URL:** `http://<STATIC_IP>:5000/webhook`
+  (or `https://<domain>/webhook` if you put Caddy/nginx in front for TLS)
+- **Content type:** `application/json`
+- **Secret:** the same value as `GITHUB_WEBHOOK_SECRET`
+- **Events:** select **Pull requests** *and* **Issue comments** (the latter powers
+  the bi-directional human-in-the-loop sync).
+
+> For a production-grade endpoint, run a Caddy reverse-proxy container in front of
+> `server` to get automatic HTTPS on 443 — GitHub strongly prefers TLS webhooks.
+
+> ⚠️ Because `ENABLE_TEST_EXECUTION` / `ENABLE_AUTO_FIX` execute and push code, treat
+> the VM as disposable and scope the `GITHUB_TOKEN` to only the demo repo.

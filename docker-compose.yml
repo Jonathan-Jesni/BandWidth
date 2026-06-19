@@ -1,0 +1,51 @@
+# BandWidth — one image, six long-lived processes.
+#
+# `server` ingests GitHub webhooks; the five agent daemons hold persistent
+# WebSocket connections to Band. They all share the same .env. Bring the whole
+# stack up with:  docker compose up -d --build
+#
+# NOTE: agents are long-lived and stateful — this is why BandWidth runs on a
+# plain VM (Docker Compose) rather than a request-scaled / scale-to-zero
+# platform like Cloud Run, which would drop the agents' WebSocket connections.
+
+x-bandwidth: &bandwidth
+  build: .
+  image: bandwidth:latest
+  env_file: .env
+  restart: unless-stopped
+
+services:
+  server:
+    <<: *bandwidth
+    container_name: bandwidth-server
+    environment:
+      HOST: "0.0.0.0"
+      PORT: "5000"
+    command: ["python", "server.py"]
+    ports:
+      - "5000:5000"
+
+  architect:
+    <<: *bandwidth
+    container_name: bandwidth-architect
+    command: ["python", "-m", "agents.architect"]
+
+  reviewer:
+    <<: *bandwidth
+    container_name: bandwidth-reviewer
+    command: ["python", "-m", "agents.reviewer"]
+
+  tester:
+    <<: *bandwidth
+    container_name: bandwidth-tester
+    command: ["python", "-m", "agents.tester"]
+
+  engineer:
+    <<: *bandwidth
+    container_name: bandwidth-engineer
+    command: ["python", "-m", "agents.engineer"]
+
+  documenter:
+    <<: *bandwidth
+    container_name: bandwidth-documenter
+    command: ["python", "-m", "agents.documenter"]
