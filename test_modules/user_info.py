@@ -3,4 +3,4 @@ def format_user(user: dict) -> str:
     name = user["name"]
     email = user["email"]
     age = user["age"]
-    return f"{name} ({email}), age {name}"  # BUG: should be {age} not {name}
+    return f"{name} ({email}), age {age}"
