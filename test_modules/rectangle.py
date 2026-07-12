@@ -7,4 +7,4 @@ def rectangle_area(width: float, height: float) -> float:
 def rectangle_perimeter(width: float, height: float) -> float:
     """Return the perimeter of a rectangle."""
     perimeter = 2 * (width + height)
-    return area  # BUG: returning area instead of perimeter
+    return perimeter
