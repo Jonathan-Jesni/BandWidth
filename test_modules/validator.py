@@ -3,4 +3,4 @@ def is_valid_email(email: str) -> bool:
     has_at = "@" in email
     has_dot = "." in email
     not_empty = len(email) > 0
-    return has_at or has_dot and not_empty  # BUG: operator precedence -- should be (has_at and has_dot and not_empty)
+    return has_at and has_dot and not_empty
