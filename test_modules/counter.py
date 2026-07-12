@@ -1,9 +1,10 @@
 _count = 0
 
-def increment():
+def increment() -> int:
     """Increment the global counter and return the new value."""
-    _count += 1  # BUG: UnboundLocalError -- needs global _count
+    global _count
+    _count += 1
     return _count
 
-def get_count():
+def get_count() -> int:
     return _count
